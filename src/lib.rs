@@ -12,5 +12,6 @@ pub mod paths;
 pub mod pipeline;
 pub mod postproc;
 pub mod timeline;
+pub mod validate;
 
 pub use pipeline::{PipelineConfig, PipelineResult, run_pipeline};

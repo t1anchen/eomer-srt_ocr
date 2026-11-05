@@ -164,6 +164,7 @@ pub fn run_pipeline(
 ) -> Result<PipelineResult> {
     let started = std::time::Instant::now();
     let media = ff.probe(&cfg.input)?;
+    crate::validate::check_duration(media.duration_secs)?;
     progress(&format!(
         "media: {}x{} {:.1}s audio={}",
         media.width, media.height, media.duration_secs, media.has_audio

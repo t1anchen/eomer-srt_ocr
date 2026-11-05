@@ -683,3 +683,68 @@ fn resolve_output_dir_is_pure_and_repeatable() {
     let b = resolve_output_dir(input, None, &cwd);
     assert_eq!(a, b);
 }
+
+// ---------------------------------------------------------------- validation
+
+use eomer_srt_ocr::validate::{
+    check_duration, check_fps, check_image_size, check_min_cue_duration, check_similarity,
+    check_width,
+};
+
+#[test]
+fn fps_within_range_is_accepted() {
+    assert!(check_fps(0.1).is_ok());
+    assert!(check_fps(2.0).is_ok());
+    assert!(check_fps(10.0).is_ok());
+}
+
+#[test]
+fn fps_out_of_range_is_rejected_with_guidance() {
+    for bad in [0.0, -1.0, 60.0, f64::NAN, f64::INFINITY] {
+        let err = check_fps(bad).expect_err(&format!("{bad} should be rejected"));
+        assert!(err.to_string().contains("--fps"), "message should name the flag: {err}");
+    }
+}
+
+#[test]
+fn width_out_of_range_is_rejected() {
+    assert!(check_width(320).is_ok());
+    assert!(check_width(1920).is_ok());
+    assert!(check_width(3840).is_ok());
+    assert!(check_width(1).is_err());
+    assert!(check_width(0).is_err());
+    assert!(check_width(8000).is_err());
+}
+
+#[test]
+fn similarity_outside_zero_one_is_rejected() {
+    assert!(check_similarity(0.0).is_ok());
+    assert!(check_similarity(1.0).is_ok());
+    assert!(check_similarity(-0.1).is_err());
+    assert!(check_similarity(1.5).is_err());
+    assert!(check_similarity(f64::NAN).is_err());
+}
+
+#[test]
+fn min_cue_duration_is_bounded() {
+    assert!(check_min_cue_duration(0.0).is_ok());
+    assert!(check_min_cue_duration(1.0).is_ok());
+    assert!(check_min_cue_duration(-1.0).is_err());
+    assert!(check_min_cue_duration(120.0).is_err());
+}
+
+#[test]
+fn oversized_image_is_rejected() {
+    assert!(check_image_size(1024).is_ok());
+    assert!(check_image_size(64 * 1024 * 1024).is_ok());
+    assert!(check_image_size(64 * 1024 * 1024 + 1).is_err());
+}
+
+#[test]
+fn too_short_media_is_rejected() {
+    assert!(check_duration(0.5).is_ok());
+    assert!(check_duration(60.0).is_ok());
+    assert!(check_duration(0.0).is_err());
+    assert!(check_duration(-1.0).is_err());
+    assert!(check_duration(f64::NAN).is_err());
+}

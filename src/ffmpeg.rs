@@ -70,13 +70,24 @@ impl Ffmpeg {
             .output()
             .with_context(|| format!("running ffprobe on {}", input.display()))?;
         if !out.status.success() {
-            bail!("ffprobe failed: {}", String::from_utf8_lossy(&out.stderr));
+            let detail = String::from_utf8_lossy(&out.stderr);
+            bail!(
+                "{} is not a readable video file: {}",
+                input.display(),
+                detail.trim()
+            );
         }
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout)
+            .with_context(|| format!("unexpected ffprobe output for {}", input.display()))?;
         let duration_secs = v["format"]["duration"]
             .as_str()
             .and_then(|s| s.parse::<f64>().ok())
-            .ok_or_else(|| anyhow!("ffprobe: missing duration"))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "{} has no readable duration; it may be a still image or a damaged file",
+                    input.display()
+                )
+            })?;
 
         let streams = v["streams"].as_array().cloned().unwrap_or_default();
         let mut width = 0u32;
@@ -96,7 +107,10 @@ impl Ffmpeg {
             }
         }
         if width == 0 || height == 0 {
-            bail!("ffprobe: no video stream found");
+            bail!(
+                "{} has no video stream; pass a video file",
+                input.display()
+            );
         }
         Ok(MediaInfo {
             width,

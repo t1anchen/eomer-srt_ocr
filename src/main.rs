@@ -82,11 +82,11 @@ enum Cmd {
         #[arg(long)]
         mask: bool,
         /// Text-similarity threshold for merging near-identical lines (0 = exact).
-        #[arg(long, default_value_t = 0.25)]
+        #[arg(long, default_value_t = 0.25, allow_hyphen_values = true)]
         similarity: f64,
         /// Minimum display duration of a cue in seconds. Short cues are
         /// extended into free time, never over the next cue.
-        #[arg(long, default_value_t = 1.0)]
+        #[arg(long, default_value_t = 1.0, allow_hyphen_values = true)]
         min_cue_duration: f64,
         /// ffmpeg executable path.
         #[arg(long)]
@@ -205,6 +205,16 @@ struct VideoArgs {
 }
 
 fn run_video(args: VideoArgs) -> Result<()> {
+    // Validate options before touching the filesystem so a typo is reported as
+    // a typo, not as a missing input file.
+    use eomer_srt_ocr::validate;
+    validate::check_width(args.width)?;
+    if let Some(fps) = args.fps {
+        validate::check_fps(fps)?;
+    }
+    validate::check_similarity(args.similarity)?;
+    validate::check_min_cue_duration(args.min_cue_duration)?;
+
     if !args.input.is_file() {
         bail!("input not found: {}", args.input.display());
     }
@@ -291,9 +301,12 @@ fn run_image_cmd(
     prompt: Option<String>,
     json: bool,
 ) -> Result<()> {
+    eomer_srt_ocr::validate::check_width(width)?;
     if !input.is_file() {
         bail!("input not found: {}", input.display());
     }
+    let bytes = std::fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+    eomer_srt_ocr::validate::check_image_size(bytes)?;
     // A standalone image is not a subtitle frame: use the general OCR prompt
     // unless the caller supplied one.
     let ocr = LlamaClient::new(
