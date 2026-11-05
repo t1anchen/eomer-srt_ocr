@@ -637,11 +637,22 @@ pub fn overlay_lines_from(
     min_frames: usize,
 ) -> std::collections::HashSet<String> {
     let index = crate::postproc::LineIndex::build(obs);
-    let anchors: Vec<String> = index
-        .overlay_candidates(min_share, min_frames)
+    let candidates = index.overlay_candidates(min_share, min_frames);
+    // A line is a fixed overlay when it recurs far more often than the most
+    // frequent *other* line. Short inputs make the absolute thresholds weak, so
+    // the relative gap does the deciding there.
+    let top_frequency = candidates.first().map(|c| c.frequency).unwrap_or(0.0);
+    let anchors: Vec<String> = candidates
         .into_iter()
-        // Only very short strings qualify: overlays are tags, not sentences.
+        // Overlays are short tags, not sentences. The bound is generous enough
+        // to admit tags, and the frequency gap below rejects talkative lines
+        // that happen to be short.
         .filter(|c| c.mean_len <= OVERLAY_MAX_CHARS as f64)
+        // Must be close to the most frequent candidate: a fixed overlay is on
+        // screen constantly, a talking line is not. Comparing against the top
+        // frequency (rather than a constant) keeps the rule meaningful whether
+        // the clip is dominated by a watermark or not.
+        .filter(|c| c.frequency >= top_frequency * OVERLAY_RELATIVE_FACTOR)
         .map(|c| c.text)
         .collect();
 
@@ -657,6 +668,9 @@ pub fn overlay_lines_from(
         if line.chars().count() > OVERLAY_MAX_CHARS {
             continue;
         }
+        // A rare misreading of a frequent anchor is still that overlay. Only
+        // distance to an anchor is considered: dialogue lines never become
+        // anchors, so a group of similar ones cannot pull each other in.
         if anchors
             .iter()
             .any(|a| crate::timeline::distance(a, line) <= OVERLAY_VARIANT_DISTANCE)
@@ -666,6 +680,11 @@ pub fn overlay_lines_from(
     }
     found
 }
+
+/// A qualifying line must reach this share of the most frequent candidate's
+/// frequency. Fixed overlays sit on most frames; dialogue lines only on the few
+/// where they are spoken, so they fall far below this bar.
+const OVERLAY_RELATIVE_FACTOR: f64 = 0.5;
 
 /// Edit distance under which two short strings are considered the same overlay.
 const OVERLAY_VARIANT_DISTANCE: f64 = 0.34;
