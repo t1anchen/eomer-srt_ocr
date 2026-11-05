@@ -607,3 +607,79 @@ fn extension_can_run_past_end_of_media() {
     assert_eq!(cues.len(), 1);
     assert!((cues[0].end - cues[0].start - 1.0).abs() < 1e-9, "{cues:?}");
 }
+
+// ------------------------------------------------------------ output layout
+
+use eomer_srt_ocr::paths::resolve_output_dir;
+
+fn tmp(name: &str) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(format!("eomer_out_{name}"));
+    let _ = std::fs::remove_dir_all(&p);
+    p
+}
+
+#[test]
+fn default_output_goes_below_out_with_the_input_stem() {
+    let cwd = tmp("cwd1");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let got = resolve_output_dir(
+        std::path::Path::new("/media/My Movie.mkv"),
+        None,
+        &cwd,
+    );
+    assert_eq!(got, cwd.join("out").join("My Movie"));
+}
+
+#[test]
+fn default_output_never_equals_the_current_directory() {
+    let cwd = tmp("cwd2");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let got = resolve_output_dir(std::path::Path::new("/media/clip.mp4"), None, &cwd);
+    assert_ne!(got, cwd, "must not write results into the working directory");
+    assert!(got.starts_with(&cwd), "default output stays under cwd/out");
+    assert_eq!(got.file_name().unwrap(), "clip");
+}
+
+#[test]
+fn explicit_out_is_used_verbatim() {
+    let cwd = tmp("cwd3");
+    let target = cwd.join("somewhere").join("here");
+    let got = resolve_output_dir(std::path::Path::new("/media/clip.mp4"), Some(&target), &cwd);
+    assert_eq!(got, target);
+}
+
+#[test]
+fn explicit_dot_out_is_not_silently_redirected() {
+    // Passing "." means the caller really wants the current directory; the
+    // tool must honour it rather than guessing a subdirectory.
+    let cwd = tmp("cwd4");
+    let got = resolve_output_dir(std::path::Path::new("/media/clip.mp4"), Some(std::path::Path::new(".")), &cwd);
+    assert_eq!(got, std::path::PathBuf::from("."));
+}
+
+#[test]
+fn input_without_extension_gets_a_sane_stem() {
+    let cwd = tmp("cwd5");
+    let got = resolve_output_dir(std::path::Path::new("/media/README"), None, &cwd);
+    assert_eq!(got.file_name().unwrap(), "README");
+}
+
+#[test]
+fn non_ascii_and_spaced_stems_are_kept() {
+    let cwd = tmp("cwd6");
+    let got = resolve_output_dir(
+        std::path::Path::new("/media/走向共和 第51集.mkv"),
+        None,
+        &cwd,
+    );
+    assert_eq!(got.file_name().unwrap(), "走向共和 第51集");
+}
+
+#[test]
+fn resolve_output_dir_is_pure_and_repeatable() {
+    let cwd = tmp("cwd7");
+    let input = std::path::Path::new("/media/a.mp4");
+    let a = resolve_output_dir(input, None, &cwd);
+    let b = resolve_output_dir(input, None, &cwd);
+    assert_eq!(a, b);
+}

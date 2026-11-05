@@ -8,6 +8,7 @@ pub mod ffmpeg;
 pub mod image_ocr;
 pub mod model;
 pub mod ocr;
+pub mod paths;
 pub mod pipeline;
 pub mod postproc;
 pub mod timeline;

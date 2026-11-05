@@ -231,9 +231,14 @@ fn run_video(args: VideoArgs) -> Result<()> {
 
     let ff =
         eomer_srt_ocr::ffmpeg::Ffmpeg::discover(args.ffmpeg.as_deref(), args.ffprobe.as_deref())?;
-    let out_dir = args
-        .out
-        .unwrap_or_else(|| PipelineConfig::default_output_dir(&args.input));
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let out_dir = eomer_srt_ocr::paths::resolve_output_dir(
+        &args.input,
+        args.out.as_deref(),
+        &cwd,
+    );
+    eprintln!("[output: {}]", out_dir.display());
+    warn_if_populated(&out_dir);
 
     let cfg = PipelineConfig {
         input: args.input.clone(),
@@ -299,13 +304,10 @@ fn run_image_cmd(
     if !ocr.healthy() {
         bail!("llama-server not reachable at {server} — start it first or pass --server");
     }
-    let out_dir = out.unwrap_or_else(|| {
-        let stem = input
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "image".into());
-        PathBuf::from("out").join(stem)
-    });
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let out_dir = eomer_srt_ocr::paths::resolve_output_dir(&input, out.as_deref(), &cwd);
+    eprintln!("[output: {}]", out_dir.display());
+    warn_if_populated(&out_dir);
     let cfg = eomer_srt_ocr::image_ocr::ImageConfig {
         input,
         output_dir: out_dir.clone(),
@@ -329,4 +331,19 @@ fn run_image_cmd(
         println!("summary: {}", path.display());
     }
     Ok(())
+}
+
+/// Tell the user when results are about to overwrite a populated directory.
+fn warn_if_populated(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let count = entries.filter(|e| e.is_ok()).count();
+    if count > 0 {
+        eprintln!(
+            "[output: {} already contains {} entries; files will be overwritten]",
+            dir.display(),
+            count
+        );
+    }
 }
