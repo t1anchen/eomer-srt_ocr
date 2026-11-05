@@ -274,7 +274,11 @@ fn extend_to_min_duration(cues: &mut [Cue], min: f64) {
         }
         // The next cue may start at the very next sample; leave a hair of gap
         // so the two cues never share a timestamp.
-        let limit = if i + 1 < n { cues[i + 1].start } else { f64::INFINITY };
+        let limit = if i + 1 < n {
+            cues[i + 1].start
+        } else {
+            f64::INFINITY
+        };
         end = (start + min).min(limit);
         if i + 1 < n && start + min > limit {
             end = limit;

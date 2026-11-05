@@ -107,10 +107,7 @@ impl Ffmpeg {
             }
         }
         if width == 0 || height == 0 {
-            bail!(
-                "{} has no video stream; pass a video file",
-                input.display()
-            );
+            bail!("{} has no video stream; pass a video file", input.display());
         }
         Ok(MediaInfo {
             width,

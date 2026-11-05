@@ -239,15 +239,27 @@ fn out_of_range_options_fail_before_touching_files() {
     let cases: &[(&[&str], &str)] = &[
         (&["video", "/no/such/file.mp4", "--fps", "60"], "--fps"),
         (&["video", "/no/such/file.mp4", "--width", "1"], "--width"),
-        (&["video", "/no/such/file.mp4", "--similarity", "2"], "--similarity"),
-        (&["video", "/no/such/file.mp4", "--min-cue-duration", "-1"], "--min-cue-duration"),
+        (
+            &["video", "/no/such/file.mp4", "--similarity", "2"],
+            "--similarity",
+        ),
+        (
+            &["video", "/no/such/file.mp4", "--min-cue-duration", "-1"],
+            "--min-cue-duration",
+        ),
         (&["image", "/no/such/file.png", "--width", "5"], "--width"),
     ];
     for (args, flag) in cases {
         assert!(!exit_ok(args), "should fail: {args:?}");
         let msg = stderr_of(args);
-        assert!(msg.contains(flag), "message for {args:?} should name {flag}: {msg}");
-        assert!(!msg.contains("input not found"), "option error first: {msg}");
+        assert!(
+            msg.contains(flag),
+            "message for {args:?} should name {flag}: {msg}"
+        );
+        assert!(
+            !msg.contains("input not found"),
+            "option error first: {msg}"
+        );
     }
 }
 
@@ -263,7 +275,12 @@ fn unreadable_video_reports_a_readable_error() {
     std::fs::create_dir_all(&dir).unwrap();
     let txt = dir.join("notes.txt");
     std::fs::write(&txt, b"not a video").unwrap();
-    let msg = stderr_of(&["video", txt.to_str().unwrap(), "--server", "http://127.0.0.1:1"]);
+    let msg = stderr_of(&[
+        "video",
+        txt.to_str().unwrap(),
+        "--server",
+        "http://127.0.0.1:1",
+    ]);
     // Either ffprobe rejection or the unreachable server may fire first; what
     // matters is that the process does not panic and says something useful.
     assert!(!msg.contains("panicked"), "{msg}");

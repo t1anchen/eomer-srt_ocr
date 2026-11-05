@@ -242,11 +242,7 @@ fn run_video(args: VideoArgs) -> Result<()> {
     let ff =
         eomer_srt_ocr::ffmpeg::Ffmpeg::discover(args.ffmpeg.as_deref(), args.ffprobe.as_deref())?;
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let out_dir = eomer_srt_ocr::paths::resolve_output_dir(
-        &args.input,
-        args.out.as_deref(),
-        &cwd,
-    );
+    let out_dir = eomer_srt_ocr::paths::resolve_output_dir(&args.input, args.out.as_deref(), &cwd);
     eprintln!("[output: {}]", out_dir.display());
     warn_if_populated(&out_dir);
 
