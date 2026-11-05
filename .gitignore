@@ -8,6 +8,9 @@
 # Runtime output (SRT, frame logs, run summaries)
 /out
 
+# e2e media fixtures: built locally from scripts/, never committed
+/tests/fixtures
+
 # OS / editor noise
 .DS_Store
 Thumbs.db
