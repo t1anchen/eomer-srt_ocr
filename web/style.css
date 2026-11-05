@@ -1,0 +1,40 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.5 system-ui, "Segoe UI", sans-serif;
+       background: #14161a; color: #e6e8eb; }
+header { padding: 18px 24px; border-bottom: 1px solid #262a30; display: flex;
+         align-items: center; gap: 16px; }
+h1 { font-size: 16px; margin: 0; font-weight: 600; }
+#backend { font-size: 12px; color: #8b939e; }
+#backend.ok { color: #4ade80; }
+#backend.bad { color: #f87171; }
+main { padding: 24px; display: grid; gap: 20px; max-width: 960px; margin: 0 auto; }
+#drop { border: 2px dashed #333941; border-radius: 12px; padding: 48px 24px;
+        text-align: center; color: #8b939e; transition: .15s; cursor: pointer; }
+#drop.over { border-color: #3b82f6; background: #1a2030; color: #cbd5e1; }
+#drop strong { color: #e6e8eb; display: block; margin-bottom: 6px; }
+#jobs { display: grid; gap: 12px; }
+.job { border: 1px solid #262a30; border-radius: 10px; padding: 14px 16px;
+       background: #1a1d22; }
+.job-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.job-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-state { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #262a30; }
+.job-state.running { background: #1e3a5f; color: #93c5fd; }
+.job-state.done { background: #14432c; color: #6ee7b7; }
+.job-state.failed { background: #4a1d1d; color: #fca5a5; }
+.bar { height: 6px; background: #262a30; border-radius: 3px; margin: 10px 0 8px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: #3b82f6; transition: width .3s; }
+.stage { font-size: 12px; color: #8b939e; font-family: ui-monospace, monospace;
+         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.error { color: #fca5a5; font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+.cues { margin: 10px 0 0; padding: 0; list-style: none; max-height: 320px; overflow-y: auto; }
+.cues li { display: grid; grid-template-columns: 130px 1fr; gap: 10px; padding: 4px 0;
+           border-top: 1px solid #22262c; font-size: 13px; }
+.cues time { color: #8b939e; font-family: ui-monospace, monospace; font-size: 12px; }
+.out-text { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px;
+            background: #101317; padding: 10px; border-radius: 8px; margin-top: 10px; }
+.actions { margin-top: 10px; display: flex; gap: 8px; }
+a.btn, button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 6px;
+                border: 1px solid #333941; background: #20242b; color: #e6e8eb;
+                cursor: pointer; text-decoration: none; }
+a.btn:hover, button:hover { background: #2a2f38; }
