@@ -150,3 +150,20 @@ impl LlamaClient {
         })
     }
 }
+
+/// Crop a frame to the subtitle band plus layout context, in full-frame pixels.
+///
+/// One frame is tiny (a few hundred KB), so a client can send frames one at a
+/// time and let the server do exactly this step. Keeping the geometry in one
+/// place keeps a client-side crop and a server-side crop identical.
+pub fn subtitle_crop(
+    frame: &image::RgbImage,
+    band: crate::band::Band,
+    pad_top: u32,
+    pad_bottom: u32,
+) -> image::RgbImage {
+    let (w, h) = frame.dimensions();
+    let y0 = band.y0.saturating_sub(pad_top);
+    let y1 = (band.y1 + pad_bottom).min(h);
+    image::imageops::crop_imm(frame, 0, y0, w, y1.saturating_sub(y0)).to_image()
+}
