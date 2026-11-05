@@ -14,3 +14,6 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
+
+# Filled-in backend launcher (machine specific, never commit)
+/scripts/*_local.cmd

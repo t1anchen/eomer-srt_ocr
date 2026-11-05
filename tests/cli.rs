@@ -217,3 +217,78 @@ fn models_skips_invalid_manifest_with_warning() {
         "broken manifest should produce a warning"
     );
 }
+
+// --------------------------------------------------------- option validation
+
+fn stderr_of(args: &[&str]) -> String {
+    let out = bin().args(args).output().expect("run");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+fn exit_ok(args: &[&str]) -> bool {
+    bin().args(args).output().expect("run").status.success()
+}
+
+#[test]
+fn out_of_range_options_fail_before_touching_files() {
+    // The input does not exist on purpose: the option error must win.
+    let cases: &[(&[&str], &str)] = &[
+        (&["video", "/no/such/file.mp4", "--fps", "60"], "--fps"),
+        (&["video", "/no/such/file.mp4", "--width", "1"], "--width"),
+        (
+            &["video", "/no/such/file.mp4", "--similarity", "2"],
+            "--similarity",
+        ),
+        (
+            &["video", "/no/such/file.mp4", "--min-cue-duration", "-1"],
+            "--min-cue-duration",
+        ),
+        (&["image", "/no/such/file.png", "--width", "5"], "--width"),
+    ];
+    for (args, flag) in cases {
+        assert!(!exit_ok(args), "should fail: {args:?}");
+        let msg = stderr_of(args);
+        assert!(
+            msg.contains(flag),
+            "message for {args:?} should name {flag}: {msg}"
+        );
+        assert!(
+            !msg.contains("input not found"),
+            "option error first: {msg}"
+        );
+    }
+}
+
+#[test]
+fn valid_options_still_reach_the_input_check() {
+    let msg = stderr_of(&["video", "/no/such/file.mp4", "--fps", "2"]);
+    assert!(msg.contains("input not found"), "{msg}");
+}
+
+#[test]
+fn unreadable_video_reports_a_readable_error() {
+    let dir = std::env::temp_dir().join("eomer_cli_badinput");
+    std::fs::create_dir_all(&dir).unwrap();
+    let txt = dir.join("notes.txt");
+    std::fs::write(&txt, b"not a video").unwrap();
+    let msg = stderr_of(&[
+        "video",
+        txt.to_str().unwrap(),
+        "--server",
+        "http://127.0.0.1:1",
+    ]);
+    // Either ffprobe rejection or the unreachable server may fire first; what
+    // matters is that the process does not panic and says something useful.
+    assert!(!msg.contains("panicked"), "{msg}");
+}
+
+#[test]
+fn non_ascii_path_with_spaces_is_parsed() {
+    // Parsing only: the file need not exist, but the name must survive.
+    let msg = stderr_of(&["image", "/tmp/中文 图片 测试.png"]);
+    assert!(msg.contains("中文 图片 测试.png"), "path mangled: {msg}");
+}
