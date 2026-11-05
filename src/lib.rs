@@ -13,6 +13,11 @@ pub mod paths;
 pub mod pipeline;
 pub mod postproc;
 pub mod progress;
+
+// The HTTP server is behind the `http` feature: the CLI has no use for it and
+// it drags in the whole async stack.
+#[cfg(feature = "http")]
+pub mod server;
 pub mod timeline;
 pub mod validate;
 

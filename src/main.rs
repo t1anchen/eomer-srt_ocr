@@ -1,6 +1,8 @@
 //! `eomer-srt-ocr` command line entry point.
 
 use anyhow::{Result, bail};
+#[cfg(feature = "http")]
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use eomer_srt_ocr::model::ModelManifest;
 use eomer_srt_ocr::ocr::LlamaClient;
@@ -101,6 +103,25 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    #[cfg(feature = "http")]
+    /// Serve the browser UI and the job API on the loopback interface.
+    Serve {
+        /// Address to bind (default 127.0.0.1:8787).
+        #[arg(long)]
+        bind: Option<String>,
+        /// llama-server base URL.
+        #[arg(long, default_value = "http://127.0.0.1:8080")]
+        server: String,
+        /// Working width frames/images are scaled to.
+        #[arg(long, default_value_t = 1280)]
+        width: u32,
+        /// Directory for per-job working files (default: ./out/serve).
+        #[arg(long)]
+        work_dir: Option<PathBuf>,
+        /// Start even when the llama-server is not reachable.
+        #[arg(long)]
+        skip_backend_check: bool,
+    },
     /// Check that the llama-server is reachable.
     Health {
         #[arg(long, default_value = "http://127.0.0.1:8080")]
@@ -168,6 +189,14 @@ fn main() -> Result<()> {
             fresh,
             json,
         }),
+        #[cfg(feature = "http")]
+        Cmd::Serve {
+            bind,
+            server,
+            width,
+            work_dir,
+            skip_backend_check,
+        } => run_serve(bind, server, width, work_dir, skip_backend_check),
         Cmd::Health { server } => {
             let client = LlamaClient::new(server.clone(), None, None);
             if client.healthy() {
@@ -411,4 +440,57 @@ fn report_server_model(server: &str) -> Result<()> {
         println!("  type:  {}", props.model_ftype);
     }
     Ok(())
+}
+
+#[cfg(feature = "http")]
+fn run_serve(
+    bind: Option<String>,
+    server: String,
+    width: u32,
+    work_dir: Option<PathBuf>,
+    skip_backend_check: bool,
+) -> Result<()> {
+    use eomer_srt_ocr::server::{AppState, ServerConfig, Store, StreamStore};
+    eomer_srt_ocr::validate::check_width(width)?;
+
+    let addr = match bind {
+        Some(s) => s
+            .parse()
+            .with_context(|| format!("invalid --bind address: {s}"))?,
+        None => ServerConfig::default_addr(),
+    };
+    // The API has no authentication and runs OCR jobs on uploaded files: it must
+    // stay on loopback unless the operator deliberately overrides this.
+    if !addr.ip().is_loopback() {
+        bail!(
+            "refusing to bind {}: this server has no authentication, use a loopback address",
+            addr.ip()
+        );
+    }
+
+    if !skip_backend_check {
+        let client = LlamaClient::new(server.clone(), None, None);
+        if !client.healthy() {
+            bail!(
+                "llama-server not reachable at {server} — start it first, pass --server, or use --skip-backend-check"
+            );
+        }
+    }
+
+    let work_dir = work_dir.unwrap_or_else(|| PathBuf::from("out").join("serve"));
+    std::fs::create_dir_all(&work_dir)
+        .with_context(|| format!("creating work dir {}", work_dir.display()))?;
+
+    let state = AppState {
+        cfg: ServerConfig {
+            addr,
+            server,
+            width,
+            work_dir,
+            skip_backend_check,
+        },
+        store: Store::new(),
+        streams: StreamStore::new(),
+    };
+    tokio::runtime::Runtime::new()?.block_on(eomer_srt_ocr::server::serve(state))
 }
