@@ -110,6 +110,9 @@ enum Cmd {
     Models {
         #[arg(short, long)]
         dir: Option<PathBuf>,
+        /// Also show what the server at this address is running.
+        #[arg(long)]
+        server: Option<String>,
     },
 }
 
@@ -174,7 +177,7 @@ fn main() -> Result<()> {
                 bail!("llama-server not reachable at {server}")
             }
         }
-        Cmd::Models { dir } => {
+        Cmd::Models { dir, server } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from("models"));
             let found = ModelManifest::scan_dir(&dir)?;
             if found.is_empty() {
@@ -182,6 +185,9 @@ fn main() -> Result<()> {
             }
             for m in found {
                 println!("{}\t{}\t{}", m.id, m.display_name, m.model_path.display());
+            }
+            if let Some(addr) = server {
+                report_server_model(&addr)?;
             }
             Ok(())
         }
@@ -243,6 +249,10 @@ fn run_video(args: VideoArgs) -> Result<()> {
             "llama-server not reachable at {} — start it first or pass --server",
             args.server
         );
+    }
+    // A manifest describes a model on disk; make sure that is the one loaded.
+    if let Some(m) = &manifest {
+        verify_server_model(&ocr, m, args.server.as_str())?;
     }
 
     let ff =
@@ -362,4 +372,43 @@ fn warn_if_populated(dir: &std::path::Path) {
             count
         );
     }
+}
+
+/// Refuse to run when the server is not serving the model a manifest describes.
+fn verify_server_model(ocr: &LlamaClient, manifest: &ModelManifest, server: &str) -> Result<()> {
+    use eomer_srt_ocr::model_check::{ModelMatch, compare, mismatch_message};
+    match ocr.props() {
+        Err(e) => eprintln!("[warning] could not verify the loaded model: {e}"),
+        Ok(props) => match compare(manifest, &props) {
+            ModelMatch::Matches { file } => eprintln!("[server model: {file}]"),
+            ModelMatch::Mismatch { actual, .. } => {
+                bail!("{} (server: {server})", mismatch_message(manifest, &actual))
+            }
+            ModelMatch::Unknown => {
+                eprintln!("[warning] the server did not report which model it loaded")
+            }
+        },
+    }
+    Ok(())
+}
+
+/// Print what the server is running alongside the manifests on disk.
+fn report_server_model(server: &str) -> Result<()> {
+    let ocr = LlamaClient::new(server.to_string(), None, None);
+    if !ocr.healthy() {
+        bail!("llama-server not reachable at {server}");
+    }
+    let props = ocr.props()?;
+    let shown = if props.model_path.is_empty() {
+        props.model_alias.clone()
+    } else {
+        props.model_path.clone()
+    };
+    println!();
+    println!("server {server} is running:");
+    println!("  model: {shown}");
+    if !props.model_ftype.is_empty() {
+        println!("  type:  {}", props.model_ftype);
+    }
+    Ok(())
 }

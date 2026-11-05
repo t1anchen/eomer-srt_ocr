@@ -83,6 +83,24 @@ impl LlamaClient {
             .unwrap_or(false)
     }
 
+    /// `GET /props` — what the server says about the model it loaded.
+    pub fn props(&self) -> Result<crate::model_check::ServerProps> {
+        let resp = self
+            .http
+            .get(format!("{}/props", self.base_url))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .with_context(|| format!("querying /props on {}", self.base_url))?;
+        if !resp.status().is_success() {
+            bail!(
+                "{} returned {}",
+                format!("{}/props", self.base_url),
+                resp.status()
+            );
+        }
+        resp.json().context("decoding /props response")
+    }
+
     /// Send one RGB image and return the recognised text.
     pub fn ocr_image(&self, img: &image::RgbImage) -> Result<OcrReply> {
         let mut buf = std::io::Cursor::new(Vec::new());
