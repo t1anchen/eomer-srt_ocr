@@ -748,3 +748,34 @@ fn too_short_media_is_rejected() {
     assert!(check_duration(-1.0).is_err());
     assert!(check_duration(f64::NAN).is_err());
 }
+
+// ------------------------------------------------------- OCR failure message
+
+use eomer_srt_ocr::pipeline::ocr_failure_message;
+
+#[test]
+fn ocr_failure_message_reports_progress_and_next_step() {
+    let msg = ocr_failure_message(41, 120, 20.5);
+    // One-based frame position, total, and how much work is already done.
+    assert!(msg.contains("frame 42 of 120"), "{msg}");
+    assert!(msg.contains("20.50s"), "{msg}");
+    assert!(msg.contains("41 frames were already processed"), "{msg}");
+    assert!(msg.contains("server is still running"), "{msg}");
+}
+
+#[test]
+fn ocr_failure_message_has_no_stray_whitespace() {
+    // The message is assembled from a continued string literal; indentation
+    // must not leak into the output.
+    let msg = ocr_failure_message(0, 10, 0.0);
+    assert!(!msg.contains("  "), "double space in message: {msg:?}");
+    assert!(!msg.contains('\n'), "message must stay on one line: {msg:?}");
+    assert_eq!(msg, msg.trim(), "no leading/trailing space: {msg:?}");
+}
+
+#[test]
+fn ocr_failure_message_at_the_first_frame() {
+    let msg = ocr_failure_message(0, 1, 0.0);
+    assert!(msg.contains("frame 1 of 1"), "{msg}");
+    assert!(msg.contains("0 frames were already processed"), "{msg}");
+}

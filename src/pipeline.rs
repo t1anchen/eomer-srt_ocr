@@ -264,7 +264,7 @@ pub fn run_pipeline(
         let t0 = std::time::Instant::now();
         let reply = ocr
             .ocr_image(&crop)
-            .with_context(|| format!("OCR frame {i} @ {t:.2}s"))?;
+            .with_context(|| ocr_failure_message(i, n_frames, t))?;
         let latency_ms = t0.elapsed().as_millis() as u64;
 
         let mut lines = timeline::clean_lines(&reply.text);
@@ -443,7 +443,9 @@ pub fn discover_band(
         for strip in FIRST_CANDIDATE_STRIP..STRIP_COUNT {
             let y0 = strip * strip_h;
             let crop = image::imageops::crop_imm(frame, 0, y0, w, strip_h).to_image();
-            let reply = ocr.ocr_image(&crop)?;
+            let reply = ocr
+                .ocr_image(&crop)
+                .with_context(|| format!("OCR failed while probing subtitle strip {strip}"))?;
             let lines: Vec<String> = timeline::clean_lines(&reply.text)
                 .into_iter()
                 .filter(|l| !is_ignored(l, ignore_patterns))
@@ -538,7 +540,9 @@ pub fn discover_overlays(frames: &[image::RgbImage], ocr: &LlamaClient) -> Resul
             let mut readings: Vec<String> = Vec::new();
             for frame in frames {
                 let cell = image::imageops::crop_imm(frame, x0, y0, col_w, row_h).to_image();
-                let reply = ocr.ocr_image(&cell)?;
+                let reply = ocr
+                    .ocr_image(&cell)
+                    .with_context(|| format!("OCR failed while probing overlay cell r{r}c{c}"))?;
                 let text: String = timeline::clean_lines(&reply.text).join("\n");
                 readings.push(text);
             }
@@ -608,3 +612,18 @@ const OVERLAY_VARIANT_DISTANCE: f64 = 0.34;
 
 /// Upper bound on the character count of an overlay tag.
 const OVERLAY_MAX_CHARS: usize = 12;
+
+/// Message shown when the model call for a frame fails.
+///
+/// Carries the progress made so far, because an inference server that goes
+/// quiet midway through a long video leaves the user with no idea how much
+/// work has to be redone.
+pub fn ocr_failure_message(frame_index: usize, total_frames: usize, time: f64) -> String {
+    format!(
+        "OCR failed on frame {} of {} (@ {time:.2}s); {} frames were already processed. \
+         Check that the inference server is still running, then run again.",
+        frame_index + 1,
+        total_frames,
+        frame_index,
+    )
+}
