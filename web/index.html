@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eomer-srt-ocr</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>eomer-srt-ocr</h1>
+  <span id="backend">检查后端…</span>
+</header>
+<main>
+  <label id="drop" for="file">
+    <strong>把图片或视频拖到这里</strong>
+    也可以点击选择文件
+    <input id="file" type="file" accept="video/*,image/*" multiple hidden>
+  </label>
+  <section id="jobs"></section>
+</main>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
