@@ -539,7 +539,10 @@ fn short_cue_is_extended_to_the_minimum() {
     assert_eq!(cues.len(), 1, "{cues:?}");
     let d = cues[0].end - cues[0].start;
     assert!((d - 1.0).abs() < 1e-9, "expected 1.0s, got {d}");
-    assert!((cues[0].start - 1.0).abs() < 1e-9, "start kept at the sampled time");
+    assert!(
+        (cues[0].start - 1.0).abs() < 1e-9,
+        "start kept at the sampled time"
+    );
 }
 
 #[test]
@@ -622,11 +625,7 @@ fn tmp(name: &str) -> std::path::PathBuf {
 fn default_output_goes_below_out_with_the_input_stem() {
     let cwd = tmp("cwd1");
     std::fs::create_dir_all(&cwd).unwrap();
-    let got = resolve_output_dir(
-        std::path::Path::new("/media/My Movie.mkv"),
-        None,
-        &cwd,
-    );
+    let got = resolve_output_dir(std::path::Path::new("/media/My Movie.mkv"), None, &cwd);
     assert_eq!(got, cwd.join("out").join("My Movie"));
 }
 
@@ -635,7 +634,10 @@ fn default_output_never_equals_the_current_directory() {
     let cwd = tmp("cwd2");
     std::fs::create_dir_all(&cwd).unwrap();
     let got = resolve_output_dir(std::path::Path::new("/media/clip.mp4"), None, &cwd);
-    assert_ne!(got, cwd, "must not write results into the working directory");
+    assert_ne!(
+        got, cwd,
+        "must not write results into the working directory"
+    );
     assert!(got.starts_with(&cwd), "default output stays under cwd/out");
     assert_eq!(got.file_name().unwrap(), "clip");
 }
@@ -653,7 +655,11 @@ fn explicit_dot_out_is_not_silently_redirected() {
     // Passing "." means the caller really wants the current directory; the
     // tool must honour it rather than guessing a subdirectory.
     let cwd = tmp("cwd4");
-    let got = resolve_output_dir(std::path::Path::new("/media/clip.mp4"), Some(std::path::Path::new(".")), &cwd);
+    let got = resolve_output_dir(
+        std::path::Path::new("/media/clip.mp4"),
+        Some(std::path::Path::new(".")),
+        &cwd,
+    );
     assert_eq!(got, std::path::PathBuf::from("."));
 }
 
@@ -702,7 +708,10 @@ fn fps_within_range_is_accepted() {
 fn fps_out_of_range_is_rejected_with_guidance() {
     for bad in [0.0, -1.0, 60.0, f64::NAN, f64::INFINITY] {
         let err = check_fps(bad).expect_err(&format!("{bad} should be rejected"));
-        assert!(err.to_string().contains("--fps"), "message should name the flag: {err}");
+        assert!(
+            err.to_string().contains("--fps"),
+            "message should name the flag: {err}"
+        );
     }
 }
 
@@ -769,7 +778,10 @@ fn ocr_failure_message_has_no_stray_whitespace() {
     // must not leak into the output.
     let msg = ocr_failure_message(0, 10, 0.0);
     assert!(!msg.contains("  "), "double space in message: {msg:?}");
-    assert!(!msg.contains('\n'), "message must stay on one line: {msg:?}");
+    assert!(
+        !msg.contains('\n'),
+        "message must stay on one line: {msg:?}"
+    );
     assert_eq!(msg, msg.trim(), "no leading/trailing space: {msg:?}");
 }
 
@@ -778,4 +790,127 @@ fn ocr_failure_message_at_the_first_frame() {
     let msg = ocr_failure_message(0, 1, 0.0);
     assert!(msg.contains("frame 1 of 1"), "{msg}");
     assert!(msg.contains("0 frames were already processed"), "{msg}");
+}
+
+// -------------------------------------------------------------- resume state
+
+use eomer_srt_ocr::progress::{ProgressRecord, ResumeDecision, RunIdentity, decide};
+
+fn ident(width: u32, fps: f64) -> RunIdentity {
+    RunIdentity {
+        input: "/media/a.mp4".into(),
+        width,
+        fps,
+        masked: false,
+    }
+}
+
+fn tmpdir(name: &str) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(format!("eomer_resume_{name}"));
+    let _ = std::fs::remove_dir_all(&p);
+    std::fs::create_dir_all(&p).unwrap();
+    p
+}
+
+#[test]
+fn no_record_means_fresh_run() {
+    assert_eq!(decide(None, &ident(1280, 2.0)), ResumeDecision::Fresh);
+}
+
+#[test]
+fn matching_record_means_resume() {
+    let record = ProgressRecord::new(ident(1280, 2.0), 120);
+    assert_eq!(
+        decide(Some(&record), &ident(1280, 2.0)),
+        ResumeDecision::Resume
+    );
+}
+
+#[test]
+fn different_width_makes_record_stale() {
+    let record = ProgressRecord::new(ident(1280, 2.0), 120);
+    assert_eq!(
+        decide(Some(&record), &ident(1920, 2.0)),
+        ResumeDecision::Stale
+    );
+}
+
+#[test]
+fn different_fps_makes_record_stale() {
+    let record = ProgressRecord::new(ident(1280, 2.0), 120);
+    assert_eq!(
+        decide(Some(&record), &ident(1280, 1.0)),
+        ResumeDecision::Stale
+    );
+}
+
+#[test]
+fn different_input_makes_record_stale() {
+    let record = ProgressRecord::new(ident(1280, 2.0), 120);
+    let mut other = ident(1280, 2.0);
+    other.input = "/media/b.mp4".into();
+    assert_eq!(decide(Some(&record), &other), ResumeDecision::Stale);
+}
+
+#[test]
+fn masking_difference_makes_record_stale() {
+    let record = ProgressRecord::new(ident(1280, 2.0), 120);
+    let mut other = ident(1280, 2.0);
+    other.masked = true;
+    assert_eq!(decide(Some(&record), &other), ResumeDecision::Stale);
+}
+
+#[test]
+fn remaining_frames_skip_completed_ones() {
+    let mut record = ProgressRecord::new(ident(1280, 2.0), 5);
+    record.done = vec![0, 1, 3];
+    assert_eq!(record.remaining(), vec![2, 4]);
+}
+
+#[test]
+fn remaining_handles_duplicates_and_out_of_order_entries() {
+    let mut record = ProgressRecord::new(ident(1280, 2.0), 4);
+    record.done = vec![3, 1, 1];
+    assert_eq!(record.remaining(), vec![0, 2]);
+}
+
+#[test]
+fn record_round_trips_through_disk() {
+    let dir = tmpdir("roundtrip");
+    let mut record = ProgressRecord::new(ident(1280, 2.0), 3);
+    record.done = vec![0, 1];
+    record.observations = vec![
+        serde_json::json!({"index": 0}),
+        serde_json::json!({"index": 1}),
+    ];
+    record.save(&dir).unwrap();
+
+    let loaded = ProgressRecord::load(&dir).expect("record should load back");
+    assert_eq!(loaded.identity, record.identity);
+    assert_eq!(loaded.done, record.done);
+    assert_eq!(loaded.total, 3);
+    assert_eq!(loaded.observations.len(), 2);
+    assert_eq!(loaded.remaining(), vec![2]);
+}
+
+#[test]
+fn loading_from_a_directory_without_a_record_returns_none() {
+    let dir = tmpdir("empty");
+    assert!(ProgressRecord::load(&dir).is_none());
+}
+
+#[test]
+fn a_corrupt_record_is_treated_as_absent() {
+    let dir = tmpdir("corrupt");
+    std::fs::write(ProgressRecord::path(&dir), b"{ this is not json").unwrap();
+    assert!(ProgressRecord::load(&dir).is_none());
+}
+
+#[test]
+fn completion_is_reported_when_every_frame_is_done() {
+    let mut record = ProgressRecord::new(ident(1280, 2.0), 2);
+    record.done = vec![0];
+    assert!(!record.is_complete());
+    record.done.push(1);
+    assert!(record.is_complete());
 }

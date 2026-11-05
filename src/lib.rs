@@ -11,6 +11,7 @@ pub mod ocr;
 pub mod paths;
 pub mod pipeline;
 pub mod postproc;
+pub mod progress;
 pub mod timeline;
 pub mod validate;
 

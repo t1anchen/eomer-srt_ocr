@@ -94,6 +94,9 @@ enum Cmd {
         /// ffprobe executable path.
         #[arg(long)]
         ffprobe: Option<PathBuf>,
+        /// Ignore stored progress and start from the first frame.
+        #[arg(long)]
+        fresh: bool,
         /// Write a machine-readable run summary.
         #[arg(long)]
         json: bool,
@@ -139,6 +142,7 @@ fn main() -> Result<()> {
             min_cue_duration,
             ffmpeg,
             ffprobe,
+            fresh,
             json,
         } => run_video(VideoArgs {
             input,
@@ -158,6 +162,7 @@ fn main() -> Result<()> {
             min_cue_duration,
             ffmpeg,
             ffprobe,
+            fresh,
             json,
         }),
         Cmd::Health { server } => {
@@ -201,6 +206,7 @@ struct VideoArgs {
     min_cue_duration: f64,
     ffmpeg: Option<PathBuf>,
     ffprobe: Option<PathBuf>,
+    fresh: bool,
     json: bool,
 }
 
@@ -264,6 +270,7 @@ fn run_video(args: VideoArgs) -> Result<()> {
         // No masks unless explicitly requested: masks are geometry-dependent.
         masks: Vec::new(),
         auto_mask: args.mask && !args.no_masks,
+        fresh: args.fresh,
         overlay_min_share: 0.10,
         overlay_min_frames: 10,
     };
