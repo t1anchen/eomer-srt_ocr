@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 /// Number of equal-height horizontal strips the frame is divided into during
 /// subtitle-band discovery. Eight strips give 135 px at 1080p.
 const STRIP_COUNT: u32 = 8;
+/// Frames processed between progress writes to disk.
+const PROGRESS_BATCH: usize = 10;
 /// Only strips in the lower part of the frame are candidates (subtitles live
 /// below the middle); expressed as a strip index.
 const FIRST_CANDIDATE_STRIP: u32 = 4;
@@ -44,6 +46,8 @@ pub struct PipelineConfig {
     pub masks: Vec<MaskRect>,
     /// Detect static overlays automatically from probe frames and mask them.
     pub auto_mask: bool,
+    /// Ignore any stored progress and start from the first frame.
+    pub fresh: bool,
     /// A line seen in at least this share of frames is treated as an overlay.
     pub overlay_min_share: f64,
     /// ...and it must appear in at least this many frames.
@@ -240,11 +244,56 @@ pub fn run_pipeline(
     // --- Pass 2: OCR every sampled frame ----------------------------------
     let n_frames = ((media.duration_secs * fps).floor() as usize).max(1);
     let frame_dt = 1.0 / fps;
-    let mut observations = Vec::with_capacity(n_frames);
-    let mut frames_with_text = 0usize;
+    let mut observations: Vec<FrameObservation> = Vec::with_capacity(n_frames);
+    let mut frames_with_text;
     let progress_every = (n_frames / 20).max(1);
 
+    // Resume: reuse frames already processed by an interrupted run with the
+    // same settings, and skip them below.
+    let identity = crate::progress::RunIdentity {
+        input: cfg.input.display().to_string(),
+        width: cfg.max_width,
+        fps,
+        masked: !masks.is_empty(),
+    };
+    let mut record = crate::progress::ProgressRecord::new(identity.clone(), n_frames);
+    let mut skip: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    if !cfg.fresh {
+        match crate::progress::ProgressRecord::load(&cfg.output_dir) {
+            None => {}
+            Some(previous) => match crate::progress::decide(Some(&previous), &identity) {
+                crate::progress::ResumeDecision::Resume => {
+                    for (idx, value) in previous.done.iter().zip(&previous.observations) {
+                        if let Ok(obs) = serde_json::from_value::<FrameObservation>(value.clone()) {
+                            if obs.index < n_frames {
+                                skip.insert(*idx);
+                                observations.push(obs);
+                            }
+                        }
+                    }
+                    record.done = previous.done.clone();
+                    record.observations = previous.observations.clone();
+                    progress(&format!(
+                        "resume: {} of {} frames already processed",
+                        skip.len(),
+                        n_frames
+                    ));
+                }
+                crate::progress::ResumeDecision::Stale => {
+                    progress("previous progress was made with different settings; starting over");
+                }
+                crate::progress::ResumeDecision::Fresh => {}
+            },
+        }
+    }
+    // Keep observations in frame order as they arrive out of order on resume.
+    observations.sort_by_key(|o| o.index);
+    frames_with_text = observations.iter().filter(|o| !o.lines.is_empty()).count();
+
     for i in 0..n_frames {
+        if skip.contains(&i) {
+            continue;
+        }
         let t = i as f64 * frame_dt;
         let frame = ff.frame(&cfg.input, t, cfg.max_width)?;
         let (w, h) = frame.dimensions();
@@ -277,16 +326,24 @@ pub fn run_pipeline(
         } else {
             reply.text.clone()
         };
-        if !lines.is_empty() {
-            frames_with_text += 1;
-        }
-        observations.push(FrameObservation {
+        let observation = FrameObservation {
             index: i,
             t,
             raw,
             lines,
             latency_ms,
-        });
+        };
+        if !observation.lines.is_empty() {
+            frames_with_text += 1;
+        }
+        record.done.push(i);
+        record
+            .observations
+            .push(serde_json::to_value(&observation)?);
+        observations.push(observation);
+        if record.done.len() % PROGRESS_BATCH == 0 {
+            record.save(&cfg.output_dir)?;
+        }
 
         if i % progress_every == 0 || i + 1 == n_frames {
             progress(&format!(
@@ -299,6 +356,9 @@ pub fn run_pipeline(
     }
 
     // --- Emit results ------------------------------------------------------
+    // All frames done: persist the final record before any later failure.
+    record.save(&cfg.output_dir)?;
+
     // --- Overlay removal (post-processing) --------------------------------
     // Overlays such as danmaku tags and "IP属地" watermarks repeat in a large
     // share of frames, far more than any dialogue line. Detect them from the
