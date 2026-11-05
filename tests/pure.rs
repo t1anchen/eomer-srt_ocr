@@ -154,12 +154,13 @@ fn timeline_empty_input() {
 
 #[test]
 fn timeline_single_observation_spanning_one_frame() {
+    // One sample lasts frame_dt, then the cue is stretched to the minimum
+    // display duration; the start stays at the sampled moment.
     let cues = build_timeline(&[obs(0, 0.0, "唯一一句")], 0.5, &cfg());
     assert_eq!(cues.len(), 1);
     assert_eq!(cues[0].text, "唯一一句");
     assert_eq!(cues[0].start, 0.0);
-    // end = start of last frame + frame_dt
-    assert!((cues[0].end - 0.5).abs() < 1e-9);
+    assert!((cues[0].end - 1.0).abs() < 1e-9, "got {:?}", cues[0].end);
 }
 
 #[test]
@@ -249,15 +250,17 @@ fn timeline_ignores_flicker_blip_between_identical_lines() {
 }
 
 #[test]
-fn timeline_drops_cues_shorter_than_minimum() {
+fn timeline_keeps_back_to_back_cues_without_overlap() {
+    // Two different lines sampled on consecutive frames. The first cue cannot
+    // reach the minimum without overlapping, so it stops at the next cue
+    // instead of being dropped or swallowing its neighbour.
     let mut c = cfg();
     c.min_cue_secs = 1.0;
     let o = vec![obs(0, 0.0, "短"), obs(1, 0.5, "另一句")];
     let cues = build_timeline(&o, 0.5, &c);
-    assert!(
-        cues.is_empty(),
-        "sub-minimum cues must be dropped: {cues:?}"
-    );
+    assert_eq!(cues.len(), 2, "{cues:?}");
+    assert!((cues[0].end - 0.5).abs() < 1e-9, "{cues:?}");
+    assert!((cues[1].start - 0.5).abs() < 1e-9, "{cues:?}");
 }
 
 #[test]
@@ -514,4 +517,93 @@ fn no_overlay_detected_when_everything_is_unique() {
         .map(|i| obs_with(i, &format!("独特台词{i}")))
         .collect();
     assert!(overlay_lines_from(&frames, 0.10, 5).is_empty());
+}
+
+// ------------------------------------------------------- minimum cue duration
+
+#[test]
+fn short_cue_is_extended_to_the_minimum() {
+    // A single supported sample yields one frame of duration; with the default
+    // minimum it must be stretched, and the opening time kept.
+    let mut c = cfg();
+    c.min_cue_secs = 1.0;
+    let o = vec![
+        obs(0, 0.0, ""),
+        obs(1, 0.5, ""),
+        obs(2, 1.0, "我問你"),
+        obs(3, 1.5, ""),
+        obs(4, 2.0, ""),
+        obs(5, 2.5, ""),
+    ];
+    let cues = build_timeline(&o, 0.5, &c);
+    assert_eq!(cues.len(), 1, "{cues:?}");
+    let d = cues[0].end - cues[0].start;
+    assert!((d - 1.0).abs() < 1e-9, "expected 1.0s, got {d}");
+    assert!((cues[0].start - 1.0).abs() < 1e-9, "start kept at the sampled time");
+}
+
+#[test]
+fn extension_does_not_overlap_the_next_cue() {
+    // Back-to-back cues: the first one may only grow into the free gap, never
+    // over the following cue.
+    let mut c = cfg();
+    c.min_cue_secs = 1.0;
+    let o = vec![
+        obs(0, 0.0, "第一句"),
+        obs(1, 0.25, "完全不同的第二句"),
+        obs(2, 0.5, "完全不同的第二句"),
+    ];
+    let cues = build_timeline(&o, 0.25, &c);
+    for w in cues.windows(2) {
+        assert!(
+            w[0].end <= w[1].start + 1e-9,
+            "cue overran its neighbour: {w:?}"
+        );
+    }
+}
+
+#[test]
+fn extension_is_capped_by_available_gap() {
+    // Only a small gap before the next cue: stretch as far as possible without
+    // touching it rather than producing an overlap.
+    let mut c = cfg();
+    c.min_cue_secs = 1.0;
+    let o = vec![
+        obs(0, 0.0, "短"),
+        obs(1, 0.5, ""),
+        obs(2, 1.0, "完全不同的第二句"),
+        obs(3, 1.5, "完全不同的第二句"),
+    ];
+    let cues = build_timeline(&o, 0.5, &c);
+    assert_eq!(cues.len(), 2, "{cues:?}");
+    assert!(cues[0].end <= cues[1].start + 1e-9, "{cues:?}");
+    assert!(
+        (cues[0].end - cues[0].start - 1.0).abs() < 1e-9,
+        "there was room for one second before the next cue"
+    );
+}
+
+#[test]
+fn long_cue_is_left_untouched() {
+    let mut c = cfg();
+    c.min_cue_secs = 1.0;
+    let o = vec![
+        obs(0, 0.0, "一句比较长的话"),
+        obs(1, 0.5, "一句比较长的话"),
+        obs(2, 1.0, "一句比较长的话"),
+        obs(3, 1.5, "一句比较长的话"),
+    ];
+    let cues = build_timeline(&o, 0.5, &c);
+    assert!((cues[0].end - cues[0].start - 2.0).abs() < 1e-9, "{cues:?}");
+}
+
+#[test]
+fn extension_can_run_past_end_of_media() {
+    // Last cue of the media: nothing follows, so it may grow freely.
+    let mut c = cfg();
+    c.min_cue_secs = 1.0;
+    let o = vec![obs(0, 0.0, "最后一句"), obs(1, 0.5, "")];
+    let cues = build_timeline(&o, 0.5, &c);
+    assert_eq!(cues.len(), 1);
+    assert!((cues[0].end - cues[0].start - 1.0).abs() < 1e-9, "{cues:?}");
 }

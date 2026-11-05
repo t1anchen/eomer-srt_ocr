@@ -45,7 +45,7 @@ impl Default for TimelineConfig {
             similarity_threshold: 0.25,
             min_gap_frames: 2,
             flicker_window: 1,
-            min_cue_secs: 0.2,
+            min_cue_secs: 1.0,
         }
     }
 }
@@ -240,22 +240,48 @@ pub fn build_timeline(obs: &[FrameObservation], frame_dt: f64, cfg: &TimelineCon
         merged.push(seg);
     }
 
-    merged
+    let mut cues: Vec<Cue> = merged
         .into_iter()
         .map(|s| {
             let end = s.end;
             (s.canonical(), (s.start, end, s.frames))
         })
-        .filter(|(text, (start, end, _))| {
-            !text.is_empty() && end - start + 1e-9 >= cfg.min_cue_secs
-        })
+        .filter(|(text, _)| !text.is_empty())
         .map(|(text, (start, end, support))| Cue {
             text,
             start,
             end,
             support,
         })
-        .collect()
+        .collect();
+
+    extend_to_min_duration(&mut cues, cfg.min_cue_secs);
+    cues
+}
+
+/// Grow cues shorter than `min` seconds so they stay on screen long enough.
+///
+/// The start time is kept (it is the moment the subtitle was seen), and the
+/// cue is lengthened only into free time: never past the start of the next
+/// cue, and never past the end of the media.
+fn extend_to_min_duration(cues: &mut [Cue], min: f64) {
+    let n = cues.len();
+    for i in 0..n {
+        let start = cues[i].start;
+        let mut end = cues[i].end;
+        if end - start + 1e-9 >= min {
+            continue;
+        }
+        // The next cue may start at the very next sample; leave a hair of gap
+        // so the two cues never share a timestamp.
+        let limit = if i + 1 < n { cues[i + 1].start } else { f64::INFINITY };
+        end = (start + min).min(limit);
+        if i + 1 < n && start + min > limit {
+            end = limit;
+        }
+        // Never shrink a cue that was already longer than the target.
+        cues[i].end = end.max(cues[i].end);
+    }
 }
 
 /// Render cues as SRT with hh:mm:ss,mmm timestamps.

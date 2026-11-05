@@ -84,6 +84,10 @@ enum Cmd {
         /// Text-similarity threshold for merging near-identical lines (0 = exact).
         #[arg(long, default_value_t = 0.25)]
         similarity: f64,
+        /// Minimum display duration of a cue in seconds. Short cues are
+        /// extended into free time, never over the next cue.
+        #[arg(long, default_value_t = 1.0)]
+        min_cue_duration: f64,
         /// ffmpeg executable path.
         #[arg(long)]
         ffmpeg: Option<PathBuf>,
@@ -132,6 +136,7 @@ fn main() -> Result<()> {
             no_masks,
             mask,
             similarity,
+            min_cue_duration,
             ffmpeg,
             ffprobe,
             json,
@@ -150,6 +155,7 @@ fn main() -> Result<()> {
             no_masks,
             mask,
             similarity,
+            min_cue_duration,
             ffmpeg,
             ffprobe,
             json,
@@ -192,6 +198,7 @@ struct VideoArgs {
     no_masks: bool,
     mask: bool,
     similarity: f64,
+    min_cue_duration: f64,
     ffmpeg: Option<PathBuf>,
     ffprobe: Option<PathBuf>,
     json: bool,
@@ -236,6 +243,7 @@ fn run_video(args: VideoArgs) -> Result<()> {
         probe_frames: args.probe_frames,
         timeline: eomer_srt_ocr::timeline::TimelineConfig {
             similarity_threshold: args.similarity,
+            min_cue_secs: args.min_cue_duration,
             ..Default::default()
         },
         band_override: None,
