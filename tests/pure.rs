@@ -914,3 +914,100 @@ fn completion_is_reported_when_every_frame_is_done() {
     record.done.push(1);
     assert!(record.is_complete());
 }
+
+// ---------------------------------------------------------- model comparison
+
+use eomer_srt_ocr::model::ModelManifest;
+use eomer_srt_ocr::model_check::{ModelMatch, ServerProps, compare, mismatch_message};
+
+fn manifest(path: &str) -> ModelManifest {
+    ModelManifest {
+        id: "dots-ocr".into(),
+        display_name: "dots.ocr".into(),
+        backend: "llamacpp-vlm".into(),
+        model_path: std::path::PathBuf::from(path),
+        mmproj_path: Some(std::path::PathBuf::from("mmproj.gguf")),
+        prompt: None,
+        llama_server: None,
+        args: vec![],
+        last_port: None,
+        subtitle_region_hint: None,
+    }
+}
+
+fn props(path: &str) -> ServerProps {
+    ServerProps {
+        model_path: path.into(),
+        model_alias: String::new(),
+        model_ftype: "Q8_0".into(),
+    }
+}
+
+#[test]
+fn same_file_matches_even_from_a_different_directory() {
+    let m = manifest(r"D:\models\dots.ocr-Q8_0.gguf");
+    let p = props("/home/user/models/dots.ocr-Q8_0.gguf");
+    assert_eq!(
+        compare(&m, &p),
+        ModelMatch::Matches {
+            file: "dots.ocr-Q8_0.gguf".into()
+        }
+    );
+}
+
+#[test]
+fn forward_and_back_slashes_are_equivalent() {
+    let m = manifest("C:/models/model.gguf");
+    let p = props(r"D:\other\model.gguf");
+    assert!(matches!(compare(&m, &p), ModelMatch::Matches { .. }));
+}
+
+#[test]
+fn different_file_is_a_mismatch() {
+    let m = manifest(r"D:\models\dots.ocr-Q8_0.gguf");
+    let p = props(r"D:\models\qwen3vl-4b.gguf");
+    assert_eq!(
+        compare(&m, &p),
+        ModelMatch::Mismatch {
+            expected: "dots.ocr-Q8_0.gguf".into(),
+            actual: "qwen3vl-4b.gguf".into(),
+        }
+    );
+}
+
+#[test]
+fn empty_server_path_falls_back_to_alias() {
+    let m = manifest("model.gguf");
+    let mut p = props("");
+    p.model_alias = "/models/model.gguf".into();
+    assert!(matches!(compare(&m, &p), ModelMatch::Matches { .. }));
+}
+
+#[test]
+fn nothing_reported_at_all_is_unknown() {
+    let m = manifest("model.gguf");
+    assert_eq!(compare(&m, &props("")), ModelMatch::Unknown);
+}
+
+#[test]
+fn mismatch_message_names_both_models_and_the_fix() {
+    let m = manifest(r"D:\models\dots.ocr-Q8_0.gguf");
+    let msg = mismatch_message(&m, "qwen3vl-4b.gguf");
+    assert!(msg.contains("qwen3vl-4b.gguf"), "{msg}");
+    assert!(msg.contains("dots.ocr-Q8_0.gguf"), "{msg}");
+    assert!(msg.contains("dots-ocr"), "manifest id should appear: {msg}");
+    assert!(msg.contains("--model"), "should suggest a way out: {msg}");
+}
+
+#[test]
+fn server_props_parses_a_real_props_payload() {
+    let raw = r#"{
+        "model_alias": "D:\\var\\llamacpp\\models\\dots.ocr-Q8_0.gguf",
+        "model_ftype": "Q8_0",
+        "model_path": "D:\\var\\llamacpp\\models\\dots.ocr-Q8_0.gguf",
+        "modalities": {"vision": true}
+    }"#;
+    let p: ServerProps = serde_json::from_str(raw).expect("props should parse");
+    assert_eq!(p.model_ftype, "Q8_0");
+    assert!(p.model_path.ends_with("dots.ocr-Q8_0.gguf"));
+}

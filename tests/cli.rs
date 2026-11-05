@@ -292,3 +292,95 @@ fn non_ascii_path_with_spaces_is_parsed() {
     let msg = stderr_of(&["image", "/tmp/中文 图片 测试.png"]);
     assert!(msg.contains("中文 图片 测试.png"), "path mangled: {msg}");
 }
+
+// ------------------------------------------------------------ model checking
+
+#[test]
+fn models_with_dead_server_reports_unreachable() {
+    let out = bin()
+        .args(["models", "--server", "http://127.0.0.1:1"])
+        .output()
+        .expect("run models");
+    assert!(
+        !out.status.success(),
+        "a requested but dead server is an error"
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("not reachable"), "{text}");
+}
+
+#[test]
+fn models_without_server_still_lists_manifests() {
+    let dir = std::env::temp_dir().join("eomer_cli_models_nosrv");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let model = dir.join("m.gguf");
+    let mmproj = dir.join("p.gguf");
+    std::fs::write(&model, b"x").unwrap();
+    std::fs::write(&mmproj, b"x").unwrap();
+    std::fs::write(
+        dir.join("m.json"),
+        serde_json::json!({
+            "id": "m", "display_name": "M",
+            "model_path": model, "mmproj_path": mmproj,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = bin()
+        .args(["models", "--dir", dir.to_str().unwrap()])
+        .output()
+        .expect("run models");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("m\tM"));
+}
+
+#[test]
+fn video_with_manifest_and_dead_server_never_reaches_model_check() {
+    // Order of checks: options, then input, then server. With no input there
+    // is nothing to verify models against, and the message stays simple.
+    let dir = std::env::temp_dir().join("eomer_cli_manifest_ok");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let model = dir.join("model.gguf");
+    let mmproj = dir.join("mmproj.gguf");
+    std::fs::write(&model, b"x").unwrap();
+    std::fs::write(&mmproj, b"x").unwrap();
+    let manifest = dir.join("m.json");
+    std::fs::write(
+        &manifest,
+        serde_json::json!({
+            "id": "m", "display_name": "M",
+            "model_path": model, "mmproj_path": mmproj,
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let out = bin()
+        .args([
+            "video",
+            "/tmp/clip.mp4",
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--server",
+            "http://127.0.0.1:1",
+        ])
+        .output()
+        .expect("run video");
+    assert!(!out.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("input not found"), "{text}");
+    assert!(
+        !text.contains("not reachable"),
+        "input check comes first: {text}"
+    );
+}

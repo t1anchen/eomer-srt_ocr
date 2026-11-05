@@ -7,6 +7,7 @@ pub mod band;
 pub mod ffmpeg;
 pub mod image_ocr;
 pub mod model;
+pub mod model_check;
 pub mod ocr;
 pub mod paths;
 pub mod pipeline;
