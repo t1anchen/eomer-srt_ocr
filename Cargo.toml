@@ -1,0 +1,32 @@
+[package]
+name = "eomer-srt-ocr"
+version = "0.1.0"
+description = "Extract burnt-in subtitles from video with a local llama.cpp VLM"
+license = "MIT"
+repository = ""
+edition = "2024"
+
+[[bin]]
+name = "eomer-srt-ocr"
+path = "src/main.rs"
+
+[lib]
+name = "eomer_srt_ocr"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+[dev-dependencies]
+serde_json = "1"
