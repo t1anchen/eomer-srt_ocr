@@ -14,6 +14,10 @@ pub struct OverlayCandidate {
     pub mean_len: f64,
 }
 
+/// Never treat a line seen fewer times than this as an overlay, however short
+/// the input: with so little evidence nothing can be inferred.
+const OVERLAY_MIN_SIGHTINGS: usize = 2;
+
 /// Statistics accumulated per distinct OCR line across a run.
 #[derive(Debug, Default)]
 pub struct LineIndex {
@@ -49,10 +53,15 @@ impl LineIndex {
         if self.total == 0 {
             return Vec::new();
         }
+        // The evidence needed scales with the input: a long video needs many
+        // sightings, a short clip only a few. Requiring a fixed count would let
+        // watermarks survive in short inputs even when they dominate them.
+        let floor = (self.total as f64 * min_share).ceil() as usize;
+        let required = floor.max(OVERLAY_MIN_SIGHTINGS).min(min_frames.max(floor));
         let mut out = Vec::new();
         for (text, &count) in &self.counts {
             let share = count as f64 / self.total as f64;
-            if count < min_frames || share < min_share {
+            if count < required {
                 continue;
             }
             let mean_len = mean_line_len(text);

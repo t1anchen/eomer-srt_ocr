@@ -1011,3 +1011,78 @@ fn server_props_parses_a_real_props_payload() {
     assert_eq!(p.model_ftype, "Q8_0");
     assert!(p.model_path.ends_with("dots.ocr-Q8_0.gguf"));
 }
+
+// -------------------------------------- overlay threshold on short inputs
+
+#[test]
+fn watermark_in_a_short_clip_is_still_removed() {
+    // Twelve frames. The tag rides along on two thirds of them while dialogue
+    // keeps changing. It never reaches an absolute frame count, but it clearly
+    // dominates the input, so it must go while dialogue stays.
+    let mut frames = Vec::new();
+    for i in 0..12 {
+        let dialogue = format!("台词{}", i % 4);
+        let mut f = obs_with(i, &dialogue);
+        if i < 8 {
+            f.lines.insert(0, "江西".to_string());
+        }
+        frames.push(f);
+    }
+    let overlays = overlay_lines_from(&frames, 0.10, 10);
+    assert!(
+        overlays.contains("江西"),
+        "short clips must not hide their watermark: {overlays:?}"
+    );
+    assert!(
+        !overlays.iter().any(|l| l.starts_with("台词")),
+        "real dialogue must survive: {overlays:?}"
+    );
+}
+
+#[test]
+fn rare_line_in_a_short_clip_is_not_an_overlay() {
+    // One appearance out of twelve is below the floor and must stay.
+    let mut frames = Vec::new();
+    for i in 0..12 {
+        let text = if i == 5 {
+            "江西".to_string()
+        } else {
+            format!("台词{i}")
+        };
+        frames.push(obs_with(i, &text));
+    }
+    let overlays = overlay_lines_from(&frames, 0.10, 10);
+    assert!(
+        overlays.is_empty(),
+        "single sighting is not an overlay: {overlays:?}"
+    );
+}
+
+#[test]
+fn absolute_frame_floor_still_applies_to_very_short_inputs() {
+    // Three frames total: one sighting is a third of the input, but with so
+    // little evidence an overlay cannot be inferred. A watermark that appears
+    // in most frames is distinguishable; a single sample is not.
+    let frames = vec![
+        obs_with(0, "江西"),
+        obs_with(1, "台词甲"),
+        obs_with(2, "台词乙"),
+    ];
+    let overlays = overlay_lines_from(&frames, 0.10, 10);
+    assert!(overlays.is_empty(), "too little evidence: {overlays:?}");
+}
+
+#[test]
+fn tiny_clip_where_watermark_dominates_removes_it() {
+    // Twelve frames, tag present in most of them.
+    let mut frames = Vec::new();
+    for i in 0..12 {
+        let text = if i < 9 { "IP属地" } else { "台词" };
+        frames.push(obs_with(i, text));
+    }
+    let overlays = overlay_lines_from(&frames, 0.10, 10);
+    assert!(
+        overlays.contains("IP属地"),
+        "dominant tag must go: {overlays:?}"
+    );
+}
