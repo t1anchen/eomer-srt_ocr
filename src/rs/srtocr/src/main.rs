@@ -106,13 +106,13 @@ enum Cmd {
     #[cfg(feature = "http")]
     /// Serve the browser UI and the job API on the loopback interface.
     Serve {
-        /// Address to bind (default 127.0.0.1:8787).
+        /// Address to bind (default 127.0.0.1:8787, env: EOMER_SRT_OCR_BIND).
         #[arg(long)]
         bind: Option<String>,
-        /// llama-server base URL.
-        #[arg(long, default_value = "http://127.0.0.1:8080")]
-        server: String,
-        /// Working width frames/images are scaled to.
+        /// llama-server base URL (env: EOMER_SRT_OCR_SERVER).
+        #[arg(long)]
+        server: Option<String>,
+        /// Working width frames/images are scaled to (env: EOMER_SRT_OCR_WIDTH).
         #[arg(long, default_value_t = 1280)]
         width: u32,
         /// Directory for per-job working files (default: ./out/serve).
@@ -445,12 +445,23 @@ fn report_server_model(server: &str) -> Result<()> {
 #[cfg(feature = "http")]
 fn run_serve(
     bind: Option<String>,
-    server: String,
+    server: Option<String>,
     width: u32,
     work_dir: Option<PathBuf>,
     skip_backend_check: bool,
 ) -> Result<()> {
     use eomer_srt_ocr::server::{AppState, ServerConfig, Store, StreamStore};
+    use eomer_srt_ocr::serve_cfg::{env_or, BIND_ENV, SERVER_ENV, WIDTH_ENV};
+    // Argument > environment > default, so the same binary can be pointed at a
+    // different backend from a unit file without rewriting the command line.
+    let bind = env_or(bind, BIND_ENV);
+    let server = env_or(server, SERVER_ENV).unwrap_or_else(|| ServerConfig::default_server());
+    let width = match env_or(None, WIDTH_ENV) {
+        Some(raw) => raw
+            .parse()
+            .with_context(|| format!("invalid {WIDTH_ENV} value: {raw}"))?,
+        None => width,
+    };
     eomer_srt_ocr::validate::check_width(width)?;
 
     let addr = match bind {
@@ -493,5 +504,11 @@ fn run_serve(
         streams: StreamStore::new(),
         gate: Default::default(),
     };
-    tokio::runtime::Runtime::new()?.block_on(eomer_srt_ocr::server::serve(state))
+    tokio::runtime::Runtime::new()?.block_on(async move {
+        // Bind first so the address printed below is the real one, including
+        // the case where the operator asked for an ephemeral port.
+        let listener = eomer_srt_ocr::server::bind(&state).await?;
+        eprintln!("listening on http://{}", listener.local_addr()?);
+        eomer_srt_ocr::server::serve_on(listener, state).await
+    })
 }
