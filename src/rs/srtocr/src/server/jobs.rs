@@ -4,6 +4,7 @@
 //! model in VRAM, and concurrent inference requests make every job slower
 //! without finishing any of them sooner.
 
+use super::gate::InferenceGate;
 use crate::image_ocr::ImageConfig;
 use crate::ocr::LlamaClient;
 use crate::pipeline::PipelineConfig;
@@ -231,7 +232,7 @@ fn finish(job: &Arc<Mutex<Job>>, outcome: Result<JobOutcome, String>) {
 }
 
 /// Run jobs one after another until the sender side goes away.
-pub fn worker(store: Store, rx: Receiver<()>) {
+pub fn worker(store: Store, gate: InferenceGate, rx: Receiver<()>) {
     while rx.recv().is_ok() {
         loop {
             let Some(job) = store.take_next() else { break };
@@ -246,7 +247,13 @@ pub fn worker(store: Store, rx: Receiver<()>) {
                 finish(&job, Err("job payload missing".to_string()));
                 continue;
             };
-            let outcome = run_one(&job, payload);
+            // One pipeline run is one long inference session: it holds the
+            // gate for its whole duration so frame uploads wait their turn
+            // instead of splitting the backend's compute budget.
+            let outcome = {
+                let _permit = gate.acquire();
+                run_one(&job, payload)
+            };
             finish(&job, outcome);
         }
     }

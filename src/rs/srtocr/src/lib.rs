@@ -13,6 +13,7 @@ pub mod paths;
 pub mod pipeline;
 pub mod postproc;
 pub mod progress;
+pub mod serve_cfg;
 
 // The HTTP server is behind the `http` feature: the CLI has no use for it and
 // it drags in the whole async stack.
