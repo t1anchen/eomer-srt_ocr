@@ -291,6 +291,32 @@ AI 不执行 `git push`。推送由负责人操作。AI 只负责本地提交与
 3. 发现的问题：过程中暴露的缺陷或设计问题
 4. 需要确认的事：有歧义或需要决策的点
 
+### 7.4 工具调用行为守则
+
+Tool Batching Discipline
+
+- During exploration (high uncertainty), use single, unbatched probes. Never
+  batch speculative edits.
+
+- During execution (verified mechanics), batch independent tool calls in
+  parallel (e.g., reading multiple files, applying non-conflicting edits).
+
+- Never batch a write with a read of the same resource, or two writes that can
+  conflict.
+
+### 7.5 输出行为守则
+
+Output Handling
+
+- For detailed patterns on capturing long command output and gradual file
+  generation, see docs/agent-output-pattern.md.
+
+- Key rule: Never truncate primary command output with tail/head; redirect to a
+  file instead.
+
+- Key rule: Avoid single file writes larger than 10KB; split into smaller files
+  or sections.
+
 ---
 
 ## 8. 运行依赖
