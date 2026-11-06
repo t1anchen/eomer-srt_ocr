@@ -443,7 +443,10 @@ struct FrameParams {
 /// the headroom covers a client that sends a full frame by mistake.
 pub const MAX_FRAME_BYTES: usize = 24 * 1024 * 1024;
 
-const OCR_PROMPT: &str = crate::ocr::DEFAULT_PROMPT;
+// The client has already isolated the subtitle band. Ask the OCR model to read
+// that crop literally; the conversational subtitle prompt can return an empty
+// response even when the crop contains clear text.
+const OCR_PROMPT: &str = crate::ocr::DEFAULT_IMAGE_PROMPT;
 
 /// Open a frame stream. Returns the id plus the band the server will use, so
 /// the client can crop identically and cut payload size.
@@ -542,11 +545,12 @@ async fn put_frame(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, format!("no stream with id {id}")))?;
 
     let server = state.cfg.server.clone();
+    let prompt = frames::prompt_of(&stream);
     let idx = FrameIndex(params.index);
     let stream_for_task: Arc<Mutex<FrameStream>> = Arc::clone(&stream);
     let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
         // Built and dropped here, on a plain blocking thread.
-        let ocr = crate::ocr::LlamaClient::new(server, None, None);
+        let ocr = crate::ocr::LlamaClient::new(server, None, Some(prompt));
         let obs = frames::ocr_frame(&stream_for_task, &ocr, idx, &body).map_err(|e| format!("{e:#}"))?;
         frames::record(&stream_for_task, obs).map(|_| ()).map_err(|e| format!("{e:#}"))
     })

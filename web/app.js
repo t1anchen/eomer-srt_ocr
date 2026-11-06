@@ -238,6 +238,7 @@ async function streamVideo(file) {
         width: src.width,
         height: src.height,
         band,
+        cropped: true,
       }),
     });
     const stream = await open.json();

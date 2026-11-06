@@ -176,6 +176,11 @@ fn lock(s: &Arc<Mutex<FrameStream>>) -> MutexGuard<'_, FrameStream> {
     s.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// The prompt selected when the stream was opened.
+pub fn prompt_of(stream: &Arc<Mutex<FrameStream>>) -> String {
+    lock(stream).spec.prompt.clone()
+}
+
 /// Decode one uploaded frame and OCR it.
 ///
 /// Runs on the blocking worker thread, never inside an async handler: the OCR
@@ -254,6 +259,27 @@ pub fn record(stream: &Arc<Mutex<FrameStream>>, obs: FrameObservation) -> anyhow
     Ok(s.frames.len() as u32)
 }
 
+/// Apply explicit ignore rules before constructing cues.
+///
+/// Automatic overlay detection is deliberately not reused here yet: OCR of an
+/// isolated crop has a different line-frequency distribution from the CLI's
+/// wider crop, and the CLI threshold can classify the only repeated dialogue
+/// line as an overlay on a short stream.
+fn without_ignored_lines(
+    observations: &[FrameObservation],
+    ignored: &[String],
+) -> Vec<FrameObservation> {
+    let mut cleaned = observations.to_vec();
+    for observation in &mut cleaned {
+        let before = observation.lines.len();
+        observation.lines.retain(|line| !ignored.contains(line));
+        if observation.lines.len() != before {
+            observation.raw = observation.lines.join("\n");
+        }
+    }
+    cleaned
+}
+
 /// Build the timeline from every frame received and write the SRT.
 pub fn finish(stream: &Arc<Mutex<FrameStream>>) -> anyhow::Result<StreamView> {
     let mut s = lock(stream);
@@ -262,6 +288,7 @@ pub fn finish(stream: &Arc<Mutex<FrameStream>>) -> anyhow::Result<StreamView> {
     }
     let cfg = timeline::TimelineConfig::default();
     let observations: Vec<FrameObservation> = s.frames.values().cloned().collect();
+    let observations = without_ignored_lines(&observations, &s.spec.ignore);
     let frame_dt = 1.0 / s.spec.fps;
     let cues = timeline::build_timeline(&observations, frame_dt, &cfg);
     let srt = timeline::to_srt(&cues);
@@ -301,6 +328,27 @@ mod tests {
             ignore: Vec::new(),
             cropped: false,
         }
+    }
+
+    #[test]
+    fn stream_prompt_is_preserved_for_the_ocr_client() {
+        let store = StreamStore::new();
+        let s = store.open(spec(), PathBuf::from("/tmp/unused"));
+        assert_eq!(prompt_of(&s), "x");
+    }
+
+    #[test]
+    fn explicit_ignores_are_removed_before_the_timeline() {
+        let observations = vec![FrameObservation {
+            index: 0,
+            t: 0.0,
+            raw: "IP属地\n字幕".to_string(),
+            lines: vec!["IP属地".to_string(), "字幕".to_string()],
+            latency_ms: 1,
+        }];
+        let cleaned = without_ignored_lines(&observations, &["IP属地".to_string()]);
+        assert_eq!(cleaned[0].lines, vec!["字幕"]);
+        assert_eq!(cleaned[0].raw, "字幕");
     }
 
     #[test]
