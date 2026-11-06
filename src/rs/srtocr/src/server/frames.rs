@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use tokio::sync::broadcast;
 
 /// One received frame, identified by its index in the stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,6 +88,9 @@ pub struct FrameStream {
     finished: Option<FinishedStream>,
     /// Kept so a finished stream can be downloaded without re-OCRing.
     pub out_dir: PathBuf,
+    /// Fans out snapshots to every /events subscriber. Never holds the stream
+    /// lock, so publishing cannot deadlock against a reader.
+    progress: broadcast::Sender<StreamView>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +110,7 @@ impl FrameStream {
             started: std::time::Instant::now(),
             finished: None,
             out_dir,
+            progress: broadcast::channel(PROGRESS_BUFFER).0,
         }
     }
 
@@ -126,6 +131,19 @@ impl FrameStream {
         }
     }
 
+    /// Push the current snapshot to every subscriber. Best-effort: when nobody
+    /// is listening the send simply fails and is ignored.
+    pub fn publish(&self) {
+        let _ = self.progress.send(self.view());
+    }
+
+    /// Subscribe to snapshots. Callers must publish a snapshot right after
+    /// subscribing so the client starts from a known state instead of waiting
+    /// for the next frame.
+    pub fn subscribe(&self) -> broadcast::Receiver<StreamView> {
+        self.progress.subscribe()
+    }
+
     /// Timestamp of a frame index. Derived from fps rather than carried in the
     /// request, so a client cannot desynchronise the timeline from the index.
     /// Timestamp of a frame index on the sampling grid.
@@ -133,6 +151,11 @@ impl FrameStream {
         index.0 as f64 / self.spec.fps
     }
 }
+
+/// How many progress snapshots a slow subscriber may fall behind before it is
+/// told it missed some. Small on purpose: a snapshot is cheap and the latest
+/// one is always the useful one.
+const PROGRESS_BUFFER: usize = 16;
 
 /// Owns every open and finished stream.
 ///
@@ -159,6 +182,10 @@ impl StreamStore {
             *n
         };
         let stream = Arc::new(Mutex::new(FrameStream::new(id, spec, out_dir)));
+        {
+            let guard = lock(&stream);
+            guard.publish();
+        }
         self.lock().insert(id, Arc::clone(&stream));
         stream
     }
@@ -256,6 +283,7 @@ pub fn record(stream: &Arc<Mutex<FrameStream>>, obs: FrameObservation) -> anyhow
     // a client may resend a frame after a network failure without corrupting
     // the timeline.
     s.frames.insert(index, obs);
+    s.publish();
     Ok(s.frames.len() as u32)
 }
 
@@ -300,6 +328,7 @@ pub fn finish(stream: &Arc<Mutex<FrameStream>>) -> anyhow::Result<StreamView> {
     let _ = elapsed;
     s.finished = Some(FinishedStream { cues, srt });
     s.state = StreamState::Done;
+    s.publish();
     Ok(s.view())
 }
 

@@ -122,9 +122,15 @@ async function streamVideo(file) {
     if (!open.ok) throw new Error(stream.error || open.statusText);
     const id = stream.id;
 
+    // Subscribe before uploading so no frame is missed. The server pushes a
+    // snapshot on connect, on every accepted frame, and on finish; the loop
+    // below keeps uploading frames regardless of how fast they arrive.
+    const watch = watchProgress(id, card);
+
     const times = timestamps(src.fps, src.duration);
     card.state.textContent = 'running';
     card.state.className = 'job-state running';
+
 
     for (let i = 0; i < times.length; i++) {
       const blob = await src.frame(times[i], band);
@@ -147,7 +153,7 @@ async function streamVideo(file) {
         }
       }
       setBar((i + 1) / times.length);
-      setStage(`识别中 ${i + 1}/${times.length} 帧`);
+      setStage(`识别中 ${i + 1}/${times.length} 帧${card.stage.dataset.server ? ' · ' + card.stage.dataset.server : ''}`);
     }
 
     setStage('整理时间轴…');
@@ -169,6 +175,7 @@ async function streamVideo(file) {
     card.card.appendChild(a);
     return true;
   } catch (e) {
+    watch.stop();
     card.state.textContent = 'failed';
     card.state.className = 'job-state failed';
     card.error.hidden = false;
@@ -180,6 +187,42 @@ async function streamVideo(file) {
 }
 
 // A card not tied to a server job id, used while frames are streaming.
+// Live server-side progress for one stream.
+//
+// The upload loop already knows how many frames it has sent, so this only has to
+// report what the server accepted and recognised. EventSource reconnects by
+// itself; the server re-sends current state on every (re)connect, so a dropped
+// connection costs nothing but a moment.
+function watchProgress(id, card) {
+  const es = new EventSource(`/api/v1/streams/${id}/events`);
+  let closed = false;
+  const stop = () => {
+    if (closed) return;
+    closed = true;
+    es.close();
+  };
+  es.addEventListener('progress', (ev) => {
+    let v;
+    try {
+      v = JSON.parse(ev.data);
+    } catch (e) {
+      return;
+    }
+    card.stage.dataset.server = `${v.frames_received} 帧已收 · ${v.frames_with_text} 帧有字`;
+    if (v.state === 'done') {
+      card.bar.style.width = '100%';
+      stop();
+    }
+  });
+  es.addEventListener('error', () => {
+    // EventSource reports both transport errors and reconnects; the browser
+    // retries on its own, so only a closed stream should stop us.
+    if (es.readyState === EventSource.CLOSED) stop();
+  });
+  window.addEventListener('beforeunload', stop);
+  return { stop };
+}
+
 function newCard(name) {
   const card = document.createElement('article');
   card.className = 'job';

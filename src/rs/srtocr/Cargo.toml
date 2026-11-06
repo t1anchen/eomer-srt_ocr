@@ -18,7 +18,7 @@ path = "src/lib.rs"
 default = []
 # The `serve` subcommand: HTTP API plus the embedded browser UI. Off by
 # default so the ordinary CLI build stays small and carries no async runtime.
-http = ["dep:axum", "dep:tokio"]
+http = ["dep:axum", "dep:tokio", "dep:futures-core", "dep:futures-util"]
 
 [dependencies]
 anyhow = "1"
@@ -31,7 +31,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 
 # Pulled in only with `--features http`.
 axum = { version = "0.8.9", features = ["multipart"], optional = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"], optional = true }
+futures-core = { version = "0.3", optional = true }
+futures-util = { version = "0.3", optional = true }
 
 [profile.release]
 opt-level = 3
