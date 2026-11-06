@@ -3,7 +3,7 @@
 #+STARTUP: hidestars content lognoterepeat lognotereschedule lognoteredeadline lognoterefile lognoteclock-out lognotedone
 #+PRIORITIES: 1 5 3 BLOCK(1) CRITICAL(2) MAJOR(3) MINOR(4) TRIVIAL(5)
 * Current Sprint
-** INPROGRESS [#2] v0 整包上传在处理函数里构造阻塞式客户端导致工作线程崩溃
+** DONE [#2] v0 整包上传在处理函数里构造阻塞式客户端导致工作线程崩溃
 :PROPERTIES:
 :CREATED: [2026-11-05 Thu]
 :END:
@@ -14,6 +14,13 @@
 同一位置的另外两处缺陷：请求体上限与实现不一致，且整包读入内存，大文件会先被拒或被撑爆。
 现状：v1 逐帧接口已完全替代该路径，前端只在浏览器无法解码时回退到它。
 处理方向：删掉整条路径，回退场景改为让前端提示不支持，不再上传整个文件。
+:LOGBOOK:
+CLOSED: [2026-11-07 Sat]
+:END:
+已完成：删除
+`/api/v0/upload/{kind}`、`/api/v0/jobs`、`/api/v0/jobs/{id}`、
+`/api/v0/jobs/{id}/srt` 四条路由与对应处理函数；前端去掉整包上传回退，
+改为提示不支持或建议用命令行 `image`。HTTP 实测四条路径均返回 404。
 ** [#4] 服务端 API [3/6]
 :PROPERTIES:
 :CREATED: [2026-11-05 Thu]

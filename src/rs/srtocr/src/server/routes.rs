@@ -1,8 +1,7 @@
-//! HTTP routes: static UI, upload, job polling, result download.
+//! HTTP routes: static UI, health, frame streams, result download.
 
 use crate::server::frames::{self, FrameIndex, FrameStream, StreamSpec, StreamView};
-use crate::server::jobs::{JobKind, JobState, Payload, Store, Upload};
-use crate::server::{AppState, JobId, JobView};
+use crate::server::AppState;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
@@ -11,16 +10,8 @@ use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-
-/// Ceiling for one upload. A 4K HDR remux is far larger than any subtitle
-/// job needs, and the whole body is buffered to disk before it is accepted.
-pub const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024 * 1024;
-
-const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "mov", "webm", "avi", "flv", "ts", "m4v"];
-const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp"];
 
 // The browser assets live at the repository's src/web/, four levels above this
 // file (src/rs/srtocr/src/server/).
@@ -55,14 +46,6 @@ pub fn router(state: AppState, tx: Sender<()>) -> Router {
         .route("/app.js", get(script_js))
         .route("/frames.js", get(frames_js))
         .route("/style.css", get(style_css))
-        // v0: whole-file upload. Known broken (see TODO.org bugfixes); kept
-        // only so an older client keeps getting an explicit answer.
-        .route("/api/v0/health", get(health))
-        .route("/api/v0/jobs", get(list_jobs))
-        .route("/api/v0/jobs/{id}", get(get_job))
-        .route("/api/v0/jobs/{id}/srt", get(download_srt))
-        .route("/api/v0/upload/{kind}", post(upload))
-        // v1: one frame per request. This is what the shipped front end uses.
         .route("/api/v1/health", get(health))
         .route("/api/v1/streams", post(open_stream).get(list_streams))
         .route("/api/v1/streams/{id}", get(get_stream))
@@ -111,218 +94,6 @@ async fn health(State((state, _)): State<Ctx>) -> Json<HealthBody> {
     })
 }
 
-async fn list_jobs(State((state, _)): State<Ctx>) -> Json<Vec<JobView>> {
-    Json(state.store.views())
-}
-
-async fn get_job(
-    State((state, _)): State<Ctx>,
-    Path(id): Path<JobId>,
-) -> Result<Json<JobView>, ApiError> {
-    let job = state.store.get(id).ok_or_else(|| ApiError::not_found(id))?;
-    let view = {
-        let j = job.lock().unwrap_or_else(|e| e.into_inner());
-        j.view.clone()
-    };
-    Ok(Json(view))
-}
-
-#[derive(Debug, Deserialize)]
-struct DownloadQuery {
-    /// `inline` renders in the browser, `attachment` downloads it.
-    #[serde(default)]
-    disposition: Option<String>,
-}
-
-async fn download_srt(
-    State((state, _)): State<Ctx>,
-    Path(id): Path<JobId>,
-    Query(q): Query<DownloadQuery>,
-) -> Result<Response, ApiError> {
-    let job = state.store.get(id).ok_or_else(|| ApiError::not_found(id))?;
-    let (state_kind, srt, name) = {
-        let j = job.lock().unwrap_or_else(|e| e.into_inner());
-        let srt = j
-            .view
-            .outcome
-            .as_ref()
-            .and_then(|o| o.srt.clone())
-            .ok_or_else(|| {
-                ApiError::new(
-                    StatusCode::CONFLICT,
-                    "this job produced no subtitle file (image jobs have none)",
-                )
-            })?;
-        let stem = std::path::Path::new(&j.view.original_name)
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "subtitle".to_string());
-        (j.view.state, srt, format!("{stem}.srt"))
-    };
-    if state_kind != JobState::Done {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "job is not finished yet",
-        ));
-    }
-    let disposition = if q.disposition.as_deref() == Some("attachment") {
-        "attachment"
-    } else {
-        "inline"
-    };
-    Ok((
-        [
-            (header::CONTENT_TYPE, "application/x-subrip; charset=utf-8".to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("{disposition}; filename=\"{name}\""),
-            ),
-        ],
-        srt,
-    )
-        .into_response())
-}
-
-/// Classify an uploaded filename. Rejects anything unrecognised rather than
-/// guessing: the pipeline shells out to ffmpeg, and a wrong guess costs minutes.
-pub fn classify(name: &str) -> Option<JobKind> {
-    let ext = std::path::Path::new(name)
-        .extension()?
-        .to_string_lossy()
-        .to_ascii_lowercase();
-    if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
-        Some(JobKind::Video)
-    } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-        Some(JobKind::Image)
-    } else {
-        None
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct UploadParams {
-    #[serde(default)]
-    fps: Option<f64>,
-    #[serde(default)]
-    max_width: Option<u32>,
-    #[serde(default, rename = "ignore")]
-    ignore: Vec<String>,
-}
-
-async fn upload(
-    State((state, tx)): State<Ctx>,
-    Path(kind_label): Path<String>,
-    Query(params): Query<UploadParams>,
-    headers: axum::http::HeaderMap,
-    body: Bytes,
-) -> Result<Json<JobView>, ApiError> {
-    if body.len() > MAX_UPLOAD_BYTES {
-        return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "upload too large"));
-    }
-    let name = filename_from_headers(&headers)
-        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "missing X-Filename header"))?;
-    let kind = classify(&name)
-        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, format!("unsupported file type: {name}")))?;
-    let expected = match kind_label.as_str() {
-        "video" => JobKind::Video,
-        "image" => JobKind::Image,
-        _ => return Err(ApiError::new(StatusCode::NOT_FOUND, "unknown upload kind")),
-    };
-    if kind != expected {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            format!("/api/upload/{kind_label} does not accept {name}"),
-        ));
-    }
-
-    let work = state.cfg.work_dir.join(format!(
-        "incoming-{}-{}",
-        std::process::id(),
-        now_millis()
-    ));
-    std::fs::create_dir_all(&work)
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?;
-    // Keep only the base name: the client controls the header, and a path
-    // separator would let it write outside the job directory.
-    let safe_name = std::path::Path::new(&name)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "upload".to_string());
-    let input = work.join(&safe_name);
-    std::fs::write(&input, &body)
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?;
-
-    let upload = Upload {
-        job_dir: work.clone(),
-        input: input.clone(),
-        original_name: safe_name.clone(),
-    };
-
-    let out_dir = work.join("out");
-    let payload = match kind {
-        JobKind::Video => {
-            let width = params.max_width.unwrap_or(state.cfg.width);
-            crate::validate::check_width(width)
-                .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-            if let Some(fps) = params.fps {
-                crate::validate::check_fps(fps)
-                    .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-            }
-            let cfg = crate::pipeline::PipelineConfig {
-                input,
-                output_dir: out_dir,
-                max_width: width,
-                fps: params.fps,
-                probe_frames: 24,
-                timeline: crate::timeline::TimelineConfig::default(),
-                band_override: None,
-                model_name: None,
-                prompt: None,
-                ignore_patterns: params.ignore,
-                masks: Vec::new(),
-                auto_mask: false,
-                fresh: true,
-                overlay_min_share: 0.10,
-                overlay_min_frames: 10,
-            };
-            let ocr = crate::ocr::LlamaClient::new(state.cfg.server.clone(), None, None);
-            Payload::Video { cfg, ocr }
-        }
-        JobKind::Image => {
-            let width = params.max_width.unwrap_or(state.cfg.width);
-            crate::validate::check_width(width)
-                .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-            let cfg = crate::image_ocr::ImageConfig {
-                input,
-                output_dir: out_dir,
-                max_width: width,
-            };
-            let ocr = crate::ocr::LlamaClient::new(
-                state.cfg.server.clone(),
-                None,
-                Some(crate::ocr::DEFAULT_IMAGE_PROMPT.to_string()),
-            );
-            Payload::Image { cfg, ocr }
-        }
-    };
-
-    let id = state.store.add(upload, payload);
-    crate::server::jobs::notify(&tx);
-    let job = state.store.get(id).ok_or_else(|| ApiError::not_found(id))?;
-    let view = {
-        let j = job.lock().unwrap_or_else(|e| e.into_inner());
-        j.view.clone()
-    };
-    Ok(Json(view))
-}
-
-fn filename_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
-    headers
-        .get("x-filename")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-}
-
 fn now_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -344,10 +115,6 @@ impl ApiError {
             message: message.into(),
         }
     }
-
-    fn not_found(id: JobId) -> Self {
-        Self::new(StatusCode::NOT_FOUND, format!("no job with id {id}"))
-    }
 }
 
 impl IntoResponse for ApiError {
@@ -359,50 +126,6 @@ impl IntoResponse for ApiError {
 impl From<std::io::Error> for ApiError {
     fn from(e: std::io::Error) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}"))
-    }
-}
-
-/// Path used by tests to build an upload directory name.
-pub fn job_dir_for(work_root: &std::path::Path) -> PathBuf {
-    work_root.join(format!("incoming-{}-{}", std::process::id(), now_millis()))
-}
-
-/// Re-exported for handlers that need to construct a store outside `serve`.
-pub fn store() -> Store {
-    Store::new()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn classifies_video_containers() {
-        for name in ["a.mp4", "b.MKV", "c.mov", "d.webm"] {
-            assert_eq!(classify(name), Some(JobKind::Video), "{name}");
-        }
-    }
-
-    #[test]
-    fn classifies_images() {
-        assert_eq!(classify("a.png"), Some(JobKind::Image));
-        assert_eq!(classify("a.JPEG"), Some(JobKind::Image));
-    }
-
-    #[test]
-    fn rejects_unknown_and_missing_extensions() {
-        assert_eq!(classify("subtitle.srt"), None);
-        assert_eq!(classify("noext"), None);
-        assert_eq!(classify(""), None);
-    }
-
-    #[test]
-    fn job_dir_names_are_unique_per_call() {
-        let root = std::path::Path::new("/tmp");
-        let a = job_dir_for(root);
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        let b = job_dir_for(root);
-        assert_ne!(a, b);
     }
 }
 
@@ -582,6 +305,13 @@ async fn finish_stream(
         s.view()
     };
     Ok(Json(view))
+}
+
+#[derive(Debug, Deserialize)]
+struct DownloadQuery {
+    /// `inline` renders in the browser, `attachment` downloads it.
+    #[serde(default)]
+    disposition: Option<String>,
 }
 
 async fn download_stream_srt(
