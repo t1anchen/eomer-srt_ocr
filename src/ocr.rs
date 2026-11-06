@@ -6,6 +6,18 @@ use base64::engine::general_purpose::STANDARD as B64;
 use serde::Deserialize;
 use std::time::Duration;
 
+/// How long one OCR request may take.
+///
+/// Measurements put the worst observed frame well under a second, so this
+/// budget is not about how long inference legitimately needs; it is about how
+/// long a broken link is allowed to look like a slow one. A debug build fails
+/// fast, and only the release binary carries the generous value that covers
+/// cold starts and slower machines.
+#[cfg(debug_assertions)]
+pub const OCR_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(not(debug_assertions))]
+pub const OCR_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Debug, Clone)]
 pub struct LlamaClient {
     http: reqwest::blocking::Client,
@@ -62,7 +74,7 @@ fn engine() -> &'static base64::engine::GeneralPurpose {
 impl LlamaClient {
     pub fn new(base_url: impl Into<String>, model: Option<String>, prompt: Option<String>) -> Self {
         let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(300))
+            .timeout(OCR_TIMEOUT)
             .build()
             .expect("building http client");
         Self {
