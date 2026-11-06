@@ -21,7 +21,7 @@ CLOSED: [2026-11-07 Sat]
 `/api/v0/upload/{kind}`、`/api/v0/jobs`、`/api/v0/jobs/{id}`、
 `/api/v0/jobs/{id}/srt` 四条路由与对应处理函数；前端去掉整包上传回退，
 改为提示不支持或建议用命令行 `image`。HTTP 实测四条路径均返回 404。
-** [#4] 服务端 API [4/6]
+** [#4] 服务端 API [5/6]
 :PROPERTIES:
 :CREATED: [2026-11-05 Thu]
 :END:
@@ -44,5 +44,14 @@ CLOSED: [2026-11-07 Sat]
 通过长连接把处理进度推送到前端。
 *** DONE 结果查询与下载
 返回字幕文件与结构化结果。
-*** TODO 接口测试
+*** DONE 接口测试
 用超文本客户端覆盖成功与失败路径。
+:LOGBOOK:
+CLOSED: [2026-11-07 Sat]
+:END:
+新增集成测试目标 `tests/http.rs`（`[[test]] required-features = ["http"]`），
+在 127.0.0.1:0 上起真实监听器并驱动真实路由，不需要推理后端。
+为支持临时端口，把 `server::serve` 拆成 `bind` 与 `serve_on`。
+覆盖：内嵌静态资源、健康检查、无版本别名与 v1 一致、开流与非法几何 400、
+finish 幂等与 SRT 下载、已删除的 v0 四条路径必须是 404。
+已用变异验证：把 `/api/v0/jobs` 路由加回去，该用例确实失败。
