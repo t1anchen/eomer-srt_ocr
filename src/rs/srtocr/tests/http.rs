@@ -174,3 +174,60 @@ async fn removed_v0_upload_endpoints_are_gone() {
         assert_eq!(res.status(), 404, "{path} must be removed");
     }
 }
+
+#[tokio::test]
+async fn progress_stream_pushes_changes_and_survives_an_idle_interval() {
+    let addr = start().await;
+    let client = reqwest::Client::new();
+
+    // Subscribing before the stream exists must be accepted, not rejected:
+    // the browser connects before it uploads the first frame.
+    let mut events = client
+        .get(url(addr, "/api/v1/streams/1/events"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(events.status(), 200, "event stream should be accepted");
+    assert_eq!(
+        events
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+        "text/event-stream"
+    );
+    let idle = read_event(&mut events).await;
+    assert!(idle.contains("waiting"), "expected an idle comment, got {idle:?}");
+
+    // A second subscriber, opened after the stream exists, gets the current
+    // snapshot immediately instead of waiting for the next frame.
+    let opened = client
+        .post(url(addr, "/api/v1/streams"))
+        .json(&json!({"fps": 2.0, "width": 640, "height": 360}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(opened.status(), 200);
+
+    let mut late = client
+        .get(url(addr, "/api/v1/streams/1/events"))
+        .send()
+        .await
+        .unwrap();
+    let first = read_event(&mut late).await;
+    assert!(
+        first.contains("event: progress") && first.contains("\"state\":\"open\""),
+        "late subscriber should get a snapshot at once, got {first:?}"
+    );
+}
+/// Read one SSE frame (up to the blank line that terminates it) as text.
+async fn read_event(resp: &mut reqwest::Response) -> String {
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await.unwrap() {
+        buf.extend_from_slice(&chunk);
+        if buf.windows(2).any(|w| w == b"\n\n") {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}

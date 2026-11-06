@@ -5,10 +5,11 @@ use crate::server::AppState;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
-use axum::response::{Html, IntoResponse, Json, Response};
+use axum::response::{sse, Html, IntoResponse, Json, Response, Sse};
 use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
+use tokio::sync::broadcast::error::RecvError;
 use serde_json::json;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -52,6 +53,7 @@ pub fn router(state: AppState, tx: Sender<()>) -> Router {
         .route("/api/v1/streams/{id}/frames", post(put_frame))
         .route("/api/v1/streams/{id}/finish", post(finish_stream))
         .route("/api/v1/streams/{id}/srt", get(download_stream_srt))
+        .route("/api/v1/streams/{id}/events", get(stream_events))
         // Unversioned aliases for v1, so a cached client does not break.
         .route("/api/health", get(health))
         .route("/api/streams", post(open_stream).get(list_streams))
@@ -343,4 +345,84 @@ async fn download_stream_srt(
         srt,
     )
         .into_response())
+}
+
+
+/// How often a quiet stream repeats its snapshot. A browser or a proxy drops
+/// an idle SSE connection, so a quiet stream re-sends its current state on this
+/// tick instead of staying silent.
+const PROGRESS_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// State carried between ticks of one /events connection.
+struct EventState {
+    /// Set until the first snapshot has been sent.
+    initial: Option<sse::Event>,
+    /// `None` when the stream does not exist (yet); the connection then idles.
+    rx: Option<tokio::sync::broadcast::Receiver<StreamView>>,
+    stream: Option<Arc<Mutex<FrameStream>>>,
+}
+
+/// Push stream progress to the browser over Server-Sent Events.
+///
+/// Replaces polling: the client gets the current snapshot as soon as it
+/// connects, then one per frame, then one when the stream finishes. An id that
+/// does not exist yet is accepted and idles, because the browser subscribes
+/// before the first upload.
+async fn stream_events(
+    State((state, _)): State<Ctx>,
+    Path(id): Path<u64>,
+) -> Sse<impl futures_core::Stream<Item = Result<sse::Event, std::convert::Infallible>>> {
+    let stream = state.streams.get(id);
+    // Subscribe before taking the snapshot so nothing published in between is
+    // lost, and send the snapshot first so the client never starts blank.
+    let (initial, rx) = match &stream {
+        Some(s) => {
+            let guard = s.lock().unwrap_or_else(|e| e.into_inner());
+            (Some(snapshot(&guard.view())), Some(guard.subscribe()))
+        }
+        None => (None, None),
+    };
+    let seed = EventState {
+        initial,
+        rx,
+        stream,
+    };
+
+    let body = futures_util::stream::unfold(seed, |mut st| async move {
+        if let Some(event) = st.initial.take() {
+            return Some((Ok(event), st));
+        }
+        if let Some(receiver) = st.rx.as_mut() {
+            match tokio::time::timeout(PROGRESS_KEEPALIVE, receiver.recv()).await {
+                Ok(Ok(view)) => return Some((Ok(snapshot(&view)), st)),
+                // Missed snapshots: the next one carries complete state.
+                Ok(Err(RecvError::Lagged(_))) => {
+                    let event = sse::Event::default().comment("lagged");
+                    return Some((Ok(event), st));
+                }
+                Ok(Err(RecvError::Closed)) => return None,
+                Err(_) => {}
+            }
+        }
+        // Quiet stream, or not created yet: repeat the current state.
+        match st.stream.as_ref() {
+            Some(s) => {
+                let view = s.lock().unwrap_or_else(|e| e.into_inner()).view();
+                Some((Ok(snapshot(&view)), st))
+            }
+            None => {
+                let event = sse::Event::default().comment("waiting");
+                Some((Ok(event), st))
+            }
+        }
+    });
+
+    Sse::new(body).keep_alive(sse::KeepAlive::default())
+}
+
+fn snapshot(view: &StreamView) -> sse::Event {
+    sse::Event::default()
+        .event("progress")
+        .json_data(view)
+        .unwrap_or_else(|_| sse::Event::default().event("error"))
 }
