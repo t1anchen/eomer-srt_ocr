@@ -2,6 +2,58 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.0] - 2026-11-06
+
+Sprint 1 hardens the CLI and adds the first local HTTP and browser workflow.
+
+### Added
+
+- Optional `http` build feature and `serve` subcommand, with the browser assets
+  embedded in the executable and the listener bound to loopback by default.
+- Browser drag-and-drop for images and videos, local frame decoding, subtitle
+  band cropping, progress polling, and SRT download.
+- Versioned `/api/v1` frame-streaming endpoints. Frames can be retried
+  individually, duplicate indices replace earlier observations, and finishing a
+  stream is idempotent.
+- Resumable video processing with input/parameter identity checks, persisted
+  observations, and an explicit fresh-start option.
+- Server model verification through llama.cpp `/props`, including manifest and
+  filename mismatch reporting.
+- Separate minimal CLI and HTTP-enabled Windows release binaries.
+
+### Changed
+
+- OCR requests fail quickly in debug builds while release builds retain a
+  larger budget for cold starts and slower machines.
+- The browser sends one cropped frame at a time instead of uploading the whole
+  video. The legacy whole-file API remains available only as a compatibility
+  fallback under `/api/v0`.
+- CLI validation and media/server error messages now identify the failing
+  parameter or stage more precisely.
+
+### Fixed
+
+- Overlay removal anchors on the most frequent observed line and merges only
+  genuine OCR variants, preventing dialogue from being removed as a watermark.
+- Streamed crops use the selected OCR prompt and are not cropped a second time.
+- Explicit ignore lines are applied before streamed timelines are built.
+- Rectangle pixel bounds normalise each axis independently.
+
+### Known limitations
+
+- The legacy `/api/v0` upload path still has its documented blocking-client and
+  whole-file buffering defects; new clients should use `/api/v1`.
+- Streamed timelines do not yet perform automatic overlay detection. Their
+  frequency distribution must be measured before reusing the CLI thresholds.
+- Browser-side decoding depends on the codecs supported by the browser.
+- The browser does not yet provide timeline editing or plain-text export.
+
+### Tests
+
+- Pure-logic, CLI-contract, model-check, resume, and frame-stream unit tests.
+- Manual Windows smoke coverage for single-image OCR, a complete short-video
+  run, and the v1 frame-streaming API.
+
 ## [0.1.0] - 2026-11-05
 
 First usable milestone: a command line tool that turns a video (or a still

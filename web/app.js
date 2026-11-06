@@ -157,11 +157,11 @@ function paintResult(host, view) {
   actions.className = 'actions';
   const srt = document.createElement('a');
   srt.className = 'btn';
-  srt.href = `/api/v1/streams/${view.id}/srt?disposition=attachment`;
+  srt.href = `/api/v0/jobs/${view.id}/srt?disposition=attachment`;
   srt.textContent = '下载 SRT';
   const open = document.createElement('a');
   open.className = 'btn';
-  open.href = `/api/v1/streams/${view.id}/srt`;
+  open.href = `/api/v0/jobs/${view.id}/srt`;
   open.target = '_blank';
   open.textContent = '查看 SRT';
   actions.append(srt, open);
@@ -177,7 +177,10 @@ function paintResult(host, view) {
 
 async function poll() {
   try {
-    const r = await fetch('/api/v1/streams');
+    // Legacy jobs use the v0 view shape. v1 streams are rendered by newCard()
+    // while their frames are uploaded; feeding them into upsert() would create
+    // a second, blank card because StreamView has no job outcome fields.
+    const r = await fetch('/api/v0/jobs');
     if (r.ok) {
       const list = await r.json();
       for (const v of list) upsert(v);
