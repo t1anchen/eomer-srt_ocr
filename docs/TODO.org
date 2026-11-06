@@ -21,7 +21,7 @@ CLOSED: [2026-11-07 Sat]
 `/api/v0/upload/{kind}`、`/api/v0/jobs`、`/api/v0/jobs/{id}`、
 `/api/v0/jobs/{id}/srt` 四条路由与对应处理函数；前端去掉整包上传回退，
 改为提示不支持或建议用命令行 `image`。HTTP 实测四条路径均返回 404。
-** [#4] 服务端 API [3/6]
+** [#4] 服务端 API [4/6]
 :PROPERTIES:
 :CREATED: [2026-11-05 Thu]
 :END:
@@ -30,8 +30,16 @@ CLOSED: [2026-11-07 Sat]
 绑定本机回环地址。
 *** DONE 上传接口
 接收视频与图片，校验类型与大小。
-*** TODO 任务队列与并发控制
+*** DONE 任务队列与并发控制
 同一时刻限制推理并发数。
+:LOGBOOK:
+CLOSED: [2026-11-07 Sat]
+:END:
+实现：新增 `server/gate.rs` 的计数信号量 `InferenceGate`（上限 1，具名常量
+`MAX_CONCURRENT_INFERENCE`）。任务 worker 在整个流水线运行期间持证，逐帧接口
+在单帧推理期间持证，两条路径共用同一道门，彼此排队而不是并发争用同一个模型。
+单测覆盖：4 线程峰值并发恒为 1、持证线程 panic 后许可仍被释放、上限大于 1 时的计数。
+`serve` 实测：静态资源、健康检查、开流均正常。
 *** TODO 进度推送
 通过长连接把处理进度推送到前端。
 *** DONE 结果查询与下载
