@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target
+/target-win*
+
+# Local dependency cache used when the global CARGO_HOME is unavailable
+/.cargo-home
+
+# Runtime output (SRT, frame logs, run summaries)
+/out
+
+# e2e media fixtures: built locally from scripts/, never committed
+/tests/fixtures
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

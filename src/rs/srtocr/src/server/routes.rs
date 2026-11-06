@@ -22,28 +22,30 @@ pub const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024 * 1024;
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "mov", "webm", "avi", "flv", "ts", "m4v"];
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp"];
 
+// The browser assets live at the repository's src/web/, four levels above this
+// file (src/rs/srtocr/src/server/).
 async fn index_html() -> Html<&'static str> {
-    Html(include_str!("../../web/index.html"))
+    Html(include_str!("../../../../web/index.html"))
 }
 
 async fn script_js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        include_str!("../../web/app.js"),
+        include_str!("../../../../web/app.js"),
     )
 }
 
 async fn frames_js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        include_str!("../../web/frames.js"),
+        include_str!("../../../../web/frames.js"),
     )
 }
 
 async fn style_css() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("../../web/style.css"),
+        include_str!("../../../../web/style.css"),
     )
 }
 

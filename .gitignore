@@ -1,15 +1,7 @@
-# Rust build artifacts
-/target
-/target-win*
-
-# Local dependency cache used when the global CARGO_HOME is unavailable
-/.cargo-home
-
-# Runtime output (SRT, frame logs, run summaries)
-/out
-
-# e2e media fixtures: built locally from scripts/, never committed
-/tests/fixtures
+# Workspace runtime directories (never committed)
+/logs
+/var
+/tmp
 
 # OS / editor noise
 .DS_Store
@@ -20,3 +12,6 @@ Thumbs.db
 
 # Filled-in backend launcher (machine specific, never commit)
 /scripts/*_local.cmd
+
+# Crate-local rules (build artifacts, cargo cache, out/, fixtures) live in
+# src/rs/srtocr/.gitignore, anchored at that directory.

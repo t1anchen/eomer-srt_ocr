@@ -1,0 +1,33 @@
+# -*- mode: org; coding: utf-8-unix; org-crypt-key: nil; -*-
+#+SEQ_TODO: TODO(t) INPROGRESS(i) DEPENDENCIES(D@/!) | DONE(d) CANCELLED(c@/!)
+#+STARTUP: hidestars content lognoterepeat lognotereschedule lognoteredeadline lognoterefile lognoteclock-out lognotedone
+#+PRIORITIES: 1 5 3 BLOCK(1) CRITICAL(2) MAJOR(3) MINOR(4) TRIVIAL(5)
+* Current Sprint
+** INPROGRESS [#2] v0 整包上传在处理函数里构造阻塞式客户端导致工作线程崩溃
+:PROPERTIES:
+:CREATED: [2026-11-05 Thu]
+:END:
+接口：POST /api/v0/upload/{kind}。
+现象：请求得不到响应，连接被直接切断，服务进程不退出但已无法正常服务。
+根因：阻塞式 HTTP 客户端内部持有一个运行时，它的创建与销毁只能在普通线程上进行；
+该客户端在异步处理函数里被同步构造，运行时的创建与析构因此落在异步上下文中并触发中止。
+同一位置的另外两处缺陷：请求体上限与实现不一致，且整包读入内存，大文件会先被拒或被撑爆。
+现状：v1 逐帧接口已完全替代该路径，前端只在浏览器无法解码时回退到它。
+处理方向：删掉整条路径，回退场景改为让前端提示不支持，不再上传整个文件。
+** [#4] 服务端 API [3/6]
+:PROPERTIES:
+:CREATED: [2026-11-05 Thu]
+:END:
+提供本地 HTTP 服务，供图形界面上传与查询结果。
+*** DONE 服务框架与静态资源托管
+绑定本机回环地址。
+*** DONE 上传接口
+接收视频与图片，校验类型与大小。
+*** TODO 任务队列与并发控制
+同一时刻限制推理并发数。
+*** TODO 进度推送
+通过长连接把处理进度推送到前端。
+*** DONE 结果查询与下载
+返回字幕文件与结构化结果。
+*** TODO 接口测试
+用超文本客户端覆盖成功与失败路径。

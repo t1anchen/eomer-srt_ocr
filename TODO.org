@@ -1,6 +1,0 @@
-# -*- mode: org; coding: utf-8-unix; org-crypt-key: nil; -*-
-#+SEQ_TODO: TODO(t) INPROGRESS(i) DEPENDENCIES(D@/!) | DONE(d) CANCELLED(c@/!)
-#+STARTUP: hidestars content lognoterepeat lognotereschedule lognoteredeadline lognoterefile lognoteclock-out lognotedone
-#+PRIORITIES: 1 5 3 BLOCK(1) CRITICAL(2) MAJOR(3) MINOR(4) TRIVIAL(5)
-
-* Current Sprint
