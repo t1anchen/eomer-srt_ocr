@@ -2,6 +2,43 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.1] - 2026-11-07
+
+Sprint 2 finishes the local HTTP service: the crash-prone legacy upload path is
+gone, inference is serialised behind one gate, and progress reaches the browser
+as a server-sent event stream.
+
+### Added
+
+- `GET /api/v1/streams/{id}/events` streams progress over Server-Sent Events.
+  A subscriber receives the current snapshot immediately, then every state
+  change; idle streams resend their state on an interval so intermediaries do
+  not drop the connection. Unknown ids wait quietly instead of returning an
+  error, because the browser subscribes before its first frame exists.
+- The browser listens with `EventSource` and shows received and text-bearing
+  frame counts as frames arrive.
+- `serve` reads `EOMER_SRT_OCR_BIND`, `EOMER_SRT_OCR_SERVER` and
+  `EOMER_SRT_OCR_WIDTH`; explicit flags still win. Blank values are ignored.
+- HTTP tests drive the real router on an ephemeral loopback port.
+
+### Changed
+
+- `--server` is now optional, since the environment can supply it.
+- `server::serve` is split into `bind` and `serve_on` so tests can bind an
+  ephemeral port.
+- A single `InferenceGate` now serialises every inference call. The job worker
+  holds it for a whole run and the frame API holds it per frame; previously the
+  frame API bypassed the queue and could compete with the worker for a backend
+  that only keeps one model resident.
+- The browser no longer polls for progress.
+
+### Removed
+
+- The legacy `/api/v0` upload, job, list and SRT routes, along with their
+  handlers. A blocking client built inside an async handler tore down a runtime
+  in an async context and killed the worker thread; the whole path is gone and
+  the browser now reports unsupported containers instead of uploading them.
+
 ## [0.2.0] - 2026-11-06
 
 Sprint 1 hardens the CLI and adds the first local HTTP and browser workflow.
