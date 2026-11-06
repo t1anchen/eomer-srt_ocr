@@ -1,6 +1,7 @@
 //! Local HTTP service: upload, queue, progress, result download.
 
 pub mod frames;
+pub mod gate;
 pub mod jobs;
 pub mod routes;
 
@@ -8,6 +9,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 pub use frames::{StreamStore, StreamView};
+pub use gate::InferenceGate;
 pub use jobs::{JobId, JobKind, JobState, JobView, Store};
 
 /// Everything the handlers need. Built once at startup and shared via `AppState`.
@@ -39,6 +41,8 @@ pub struct AppState {
     pub store: Store,
     /// Frame-streaming jobs, keyed by stream id.
     pub streams: StreamStore,
+    /// Serialises every call to the inference backend across paths.
+    pub gate: InferenceGate,
 }
 
 /// Bind the listener and serve until the process is stopped.
@@ -46,9 +50,10 @@ pub async fn serve(state: AppState) -> anyhow::Result<()> {
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     {
         let store = state.store.clone();
+        let gate = state.gate.clone();
         std::thread::Builder::new()
             .name("ocr-worker".to_string())
-            .spawn(move || jobs::worker(store, rx))?;
+            .spawn(move || jobs::worker(store, gate, rx))?;
     }
 
     let app = routes::router(state.clone(), tx);
