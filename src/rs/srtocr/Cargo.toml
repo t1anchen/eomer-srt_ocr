@@ -37,5 +37,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = tr
 opt-level = 3
 lto = "thin"
 
+# Drives a real listener on 127.0.0.1:0; skipped unless the feature is on.
+[[test]]
+name = "http"
+path = "tests/http.rs"
+required-features = ["http"]
+
 [dev-dependencies]
 serde_json = "1"
+axum = { version = "0.8.9", features = ["multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
