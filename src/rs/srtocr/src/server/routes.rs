@@ -273,7 +273,11 @@ async fn put_frame(
     let prompt = frames::prompt_of(&stream);
     let idx = FrameIndex(params.index);
     let stream_for_task: Arc<Mutex<FrameStream>> = Arc::clone(&stream);
+    // The same gate the job worker holds, so a frame upload queues behind a
+    // running pipeline instead of competing with it for the single model.
+    let gate = state.gate.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let _permit = gate.acquire();
         // Built and dropped here, on a plain blocking thread.
         let ocr = crate::ocr::LlamaClient::new(server, None, Some(prompt));
         let obs = frames::ocr_frame(&stream_for_task, &ocr, idx, &body).map_err(|e| format!("{e:#}"))?;

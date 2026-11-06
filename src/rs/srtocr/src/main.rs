@@ -491,6 +491,7 @@ fn run_serve(
         },
         store: Store::new(),
         streams: StreamStore::new(),
+        gate: Default::default(),
     };
     tokio::runtime::Runtime::new()?.block_on(eomer_srt_ocr::server::serve(state))
 }
