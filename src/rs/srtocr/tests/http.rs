@@ -220,6 +220,73 @@ async fn progress_stream_pushes_changes_and_survives_an_idle_interval() {
         "late subscriber should get a snapshot at once, got {first:?}"
     );
 }
+/// A finished stream exposes its timeline for review, and the same cues
+/// back the plain-text export. Both are what the browser needs to show the
+/// result without re-running OCR.
+#[tokio::test]
+async fn finished_stream_exposes_cues_and_plain_text() {
+    let addr = start().await;
+    let client = reqwest::Client::new();
+
+    // Open with no frames at all: the timeline is empty, but it is still a
+    // finished timeline, so review endpoints must answer rather than 404.
+    let opened = client
+        .post(url(addr, "/api/v1/streams"))
+        .json(&json!({ "fps": 2.0, "width": 640, "height": 360, "cropped": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(opened.status(), 200);
+    let id = opened.json::<Value>().await.unwrap()["id"]
+        .as_u64()
+        .expect("stream id");
+
+    // Before finishing there is no timeline to review.
+    let early = client
+        .get(url(addr, &format!("/api/v1/streams/{id}/cues")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(early.status(), 409, "cues before finish must be a conflict");
+
+    let fin = client
+        .post(url(addr, &format!("/api/v1/streams/{id}/finish")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(fin.status(), 200);
+
+    let cues = client
+        .get(url(addr, &format!("/api/v1/streams/{id}/cues")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cues.status(), 200, "finished stream should expose cues");
+    let list = cues.json::<Value>().await.unwrap();
+    assert!(list.is_array(), "cues must be an array, got {list}");
+
+    let txt = client
+        .get(url(addr, &format!("/api/v1/streams/{id}/txt")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(txt.status(), 200, "finished stream should export text");
+    assert!(txt
+        .headers()
+        .get("content-type")
+        .map(|v| v.to_str().unwrap_or("").starts_with("text/plain"))
+        .unwrap_or(false));
+}
+
+/// Review endpoints must not answer for a stream that does not exist.
+#[tokio::test]
+async fn review_endpoints_404_for_unknown_streams() {
+    let addr = start().await;
+    for path in ["/api/v1/streams/999/cues", "/api/v1/streams/999/txt"] {
+        let r = reqwest::get(url(addr, path)).await.unwrap();
+        assert_eq!(r.status(), 404, "{path} should be 404");
+    }
+}
 /// Read one SSE frame (up to the blank line that terminates it) as text.
 async fn read_event(resp: &mut reqwest::Response) -> String {
     let mut buf = Vec::new();

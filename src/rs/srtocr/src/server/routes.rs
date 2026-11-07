@@ -53,6 +53,8 @@ pub fn router(state: AppState, tx: Sender<()>) -> Router {
         .route("/api/v1/streams/{id}/frames", post(put_frame))
         .route("/api/v1/streams/{id}/finish", post(finish_stream))
         .route("/api/v1/streams/{id}/srt", get(download_stream_srt))
+        .route("/api/v1/streams/{id}/cues", get(stream_cues))
+        .route("/api/v1/streams/{id}/txt", get(download_stream_txt))
         .route("/api/v1/streams/{id}/events", get(stream_events))
         // Unversioned aliases for v1, so a cached client does not break.
         .route("/api/health", get(health))
@@ -61,6 +63,8 @@ pub fn router(state: AppState, tx: Sender<()>) -> Router {
         .route("/api/streams/{id}/frames", post(put_frame))
         .route("/api/streams/{id}/finish", post(finish_stream))
         .route("/api/streams/{id}/srt", get(download_stream_srt))
+        .route("/api/streams/{id}/cues", get(stream_cues))
+        .route("/api/streams/{id}/txt", get(download_stream_txt))
         .with_state((state, tx))
 }
 
@@ -311,6 +315,66 @@ async fn finish_stream(
         s.view()
     };
     Ok(Json(view))
+}
+
+/// One subtitle line span, as the browser needs it for review: what it says and
+/// where it sits on the timeline.
+#[derive(Debug, Serialize, Clone)]
+struct CueView {
+    start: f64,
+    end: f64,
+    text: String,
+}
+
+async fn stream_cues(
+    State((state, _)): State<Ctx>,
+    Path(id): Path<u64>,
+) -> Result<Json<Vec<CueView>>, ApiError> {
+    let stream = state
+        .streams
+        .get(id)
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, format!("no stream with id {id}")))?;
+    let cues = frames::cues_of(&stream)
+        .ok_or_else(|| ApiError::new(StatusCode::CONFLICT, "stream is not finished yet"))?;
+    Ok(Json(
+        cues.into_iter()
+            .map(|c| CueView {
+                start: c.start,
+                end: c.end,
+                text: c.text,
+            })
+            .collect(),
+    ))
+}
+
+/// The finished cues as plain text, one line per cue. Encoded as a data URL by
+/// the client so a single-file deployment needs no extra endpoint round trip.
+async fn download_stream_txt(
+    State((state, _)): State<Ctx>,
+    Path(id): Path<u64>,
+) -> Result<([(axum::http::HeaderName, String); 2], String), ApiError> {
+    let stream = state
+        .streams
+        .get(id)
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, format!("no stream with id {id}")))?;
+    let cues = frames::cues_of(&stream)
+        .ok_or_else(|| ApiError::new(StatusCode::CONFLICT, "stream is not finished yet"))?;
+    let body = cues
+        .iter()
+        .map(|c| c.text.replace('\n', " "))
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/plain; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"stream-{id}.txt\""),
+            ),
+        ],
+        body,
+    ))
 }
 
 #[derive(Debug, Deserialize)]

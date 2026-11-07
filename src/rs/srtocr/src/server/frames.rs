@@ -332,6 +332,13 @@ pub fn finish(stream: &Arc<Mutex<FrameStream>>) -> anyhow::Result<StreamView> {
     Ok(s.view())
 }
 
+/// The finished timeline, if the stream has one. Cues stay in memory so the
+/// browser can show them for review without re-running OCR.
+pub fn cues_of(stream: &Arc<Mutex<FrameStream>>) -> Option<Vec<Cue>> {
+    let s = lock(stream);
+    s.finished.as_ref().map(|f| f.cues.clone())
+}
+
 /// The finished SRT body, if the stream produced one.
 pub fn srt_of(stream: &Arc<Mutex<FrameStream>>) -> Option<String> {
     let s = lock(stream);
