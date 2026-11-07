@@ -168,11 +168,7 @@ async function streamVideo(file) {
       `${view.elapsed_secs.toFixed(1)} 秒`;
     card.bar.style.width = '100%';
 
-    const a = document.createElement('a');
-    a.className = 'btn';
-    a.href = `/api/v1/streams/${id}/srt?disposition=attachment`;
-    a.textContent = '下载 SRT';
-    card.card.appendChild(a);
+    await showResult(card, id, file);
     return true;
   } catch (e) {
     watch.stop();
@@ -221,6 +217,82 @@ function watchProgress(id, card) {
   });
   window.addEventListener('beforeunload', stop);
   return { stop };
+}
+
+// Render the finished timeline: each cue seeks the preview, and the exports
+// carry the reviewed text rather than the raw OCR output.
+async function showResult(card, id, file) {
+  const res = await fetch(`/api/v1/streams/${id}/cues`);
+  if (!res.ok) {
+    card.error.hidden = false;
+    card.error.textContent = `无法读取时间轴（${res.status}）`;
+    return;
+  }
+  const cues = await res.json();
+
+  // A second decoder on the original file: the working <video> is closed as
+  // soon as the upload finishes, so it cannot serve as the preview.
+  const objectUrl = URL.createObjectURL(file);
+  const preview = document.createElement('video');
+  preview.src = objectUrl;
+  preview.controls = true;
+  preview.preload = 'metadata';
+  preview.className = 'preview';
+  card.card.appendChild(preview);
+
+  const list = document.createElement('ul');
+  list.className = 'cues review';
+  for (const cue of cues) {
+    const li = document.createElement('li');
+    const t = document.createElement('button');
+    t.type = 'button';
+    t.className = 'seek';
+    t.textContent = `${fmtTime(cue.start)} → ${fmtTime(cue.end)}`;
+    t.addEventListener('click', () => {
+      preview.currentTime = cue.start;
+      preview.play().catch(() => {});
+    });
+    const span = document.createElement('span');
+    span.className = 'cue-text';
+    span.textContent = cue.text;
+    // Editing is local: the SRT the server already wrote stays the source of
+    // truth, and downloaded text reflects whatever is on screen right now.
+    span.contentEditable = 'true';
+    li.append(t, span);
+    list.appendChild(li);
+  }
+  card.card.appendChild(list);
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const srt = document.createElement('a');
+  srt.className = 'btn';
+  srt.href = `/api/v1/streams/${id}/srt?disposition=attachment`;
+  srt.textContent = '下载 SRT';
+  const txt = document.createElement('button');
+  txt.type = 'button';
+  txt.className = 'btn';
+  txt.textContent = '下载纯文本';
+  txt.addEventListener('click', () => {
+    const body = [...list.querySelectorAll('.cue-text')]
+      .map((el) => el.textContent.trim())
+      .filter(Boolean)
+      .join('\n');
+    downloadText(`stream-${id}.txt`, body);
+  });
+  actions.append(srt, txt);
+  card.card.appendChild(actions);
+  // The object URL lives as long as the card does.
+  card.card.addEventListener('remove', () => URL.revokeObjectURL(objectUrl));
+}
+
+function downloadText(name, body) {
+  const blob = new Blob([body], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function newCard(name) {
